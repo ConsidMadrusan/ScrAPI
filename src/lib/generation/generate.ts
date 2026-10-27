@@ -61,13 +61,7 @@ export async function generateClient(
       },
     };
   } catch (error) {
-    if (error instanceof OutputLimitError) {
-      return failure(
-        422,
-        "output-too-large",
-        "The generated code is too large. Select fewer operations and try again.",
-      );
-    }
+    if (error instanceof OutputLimitError) return outputTooLarge();
     throw error;
   } finally {
     await rm(workDir, { recursive: true, force: true });
@@ -84,6 +78,8 @@ function generatorFailure(
         "generation-timeout",
         "Generation took too long and was stopped. Select fewer operations and try again.",
       );
+    case "output-too-large":
+      return outputTooLarge();
     case "failed":
       return failure(
         422,
@@ -99,6 +95,10 @@ function generatorFailure(
       console.error("Code generator is not available", { reason: outcome.reason });
       return failure(503, "generator-unavailable", "Code generation is not available on this server right now.");
   }
+}
+
+function outputTooLarge(): Extract<GenerateResult, { ok: false }> {
+  return failure(422, "output-too-large", "The generated code is too large. Select fewer operations and try again.");
 }
 
 function failure(status: number, code: string, message: string): Extract<GenerateResult, { ok: false }> {

@@ -6,9 +6,13 @@ import { join } from "node:path";
 import { z } from "zod";
 import { GLOBAL_PROPERTIES, type GeneratorSettings } from "@/lib/targets/config";
 import generatorConfig from "../../../openapitools.json";
+import { exceedsRawOutputLimits } from "./collect-output";
 
 /** Generation normally takes about a second; this allows for large specifications. */
 export const GENERATION_TIMEOUT_MS = 60_000;
+
+/** How often the output folder is measured while the generator runs. */
+export const OUTPUT_CHECK_INTERVAL_MS = 250;
 
 /**
  * Most generator JVMs that may run at once; further requests are rejected as busy.
@@ -52,6 +56,7 @@ export type GeneratorOutcome =
   | { status: "ok" }
   | { status: "failed"; exitCode: number | null }
   | { status: "timeout" }
+  | { status: "output-too-large" }
   | { status: "aborted" }
   | { status: "busy" }
   | { status: "unavailable"; reason: "missing-jar" | "missing-java" };
@@ -89,7 +94,8 @@ export function generatorArguments(run: GeneratorRun, jarPath: string): string[]
  * Runs OpenAPI Generator as a child process without a shell. Its output is
  * discarded rather than logged, because it can echo specification content.
  * At most MAX_CONCURRENT_GENERATIONS run at once; the child is killed on
- * timeout or when `run.signal` aborts.
+ * timeout, when its output folder passes the raw output limits, or when
+ * `run.signal` aborts.
  */
 export async function runGenerator(run: GeneratorRun): Promise<GeneratorOutcome> {
   if (runningGenerators >= MAX_CONCURRENT_GENERATIONS) return { status: "busy" };
@@ -119,8 +125,10 @@ async function startGenerator(run: GeneratorRun): Promise<GeneratorOutcome> {
       windowsHide: true,
     });
 
-    let stopReason: "timeout" | "aborted" | undefined;
-    const stop = (reason: "timeout" | "aborted"): void => {
+    type StopReason = "timeout" | "output-too-large" | "aborted";
+    let stopReason: StopReason | undefined;
+    let finished = false;
+    const stop = (reason: StopReason): void => {
       stopReason ??= reason;
       child.kill("SIGKILL");
     };
@@ -131,8 +139,30 @@ async function startGenerator(run: GeneratorRun): Promise<GeneratorOutcome> {
       stop("aborted");
     };
     signal?.addEventListener("abort", onAbort, { once: true });
+
+    // Measures the output folder while the generator runs, so a hostile
+    // specification cannot fill the temp disk before the timeout.
+    let outputCheck: NodeJS.Timeout | undefined;
+    const scheduleOutputCheck = (): void => {
+      outputCheck = setTimeout(() => {
+        void exceedsRawOutputLimits(run.outputDir).then(
+          (exceeded) => {
+            if (finished) return;
+            if (exceeded) stop("output-too-large");
+            else scheduleOutputCheck();
+          },
+          () => {
+            if (!finished) scheduleOutputCheck();
+          },
+        );
+      }, OUTPUT_CHECK_INTERVAL_MS);
+    };
+    scheduleOutputCheck();
+
     const cleanUp = (): void => {
+      finished = true;
       clearTimeout(timer);
+      clearTimeout(outputCheck);
       signal?.removeEventListener("abort", onAbort);
     };
 

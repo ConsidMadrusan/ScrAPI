@@ -4,8 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const spawnMock = vi.hoisted(() => vi.fn());
 const accessMock = vi.hoisted(() => vi.fn());
 
+const exceedsMock = vi.hoisted(() => vi.fn<(root: string) => Promise<boolean>>());
+
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("node:fs/promises", () => ({ access: accessMock }));
+vi.mock("./collect-output", () => ({ exceedsRawOutputLimits: exceedsMock }));
 
 const { generatorArguments, generatorJarPath, MAX_CONCURRENT_GENERATIONS, runGenerator } = await import("./java-generator");
 
@@ -66,6 +69,33 @@ describe("runGenerator", () => {
   beforeEach(() => {
     spawnMock.mockReset();
     accessMock.mockResolvedValue(undefined);
+    exceedsMock.mockReset();
+    exceedsMock.mockResolvedValue(false);
+  });
+
+  it("kills the process when its output folder grows past the limits", async () => {
+    const child = fakeProcess();
+    exceedsMock.mockResolvedValueOnce(false).mockResolvedValue(true);
+
+    const outcome = await runGenerator(run);
+
+    expect(exceedsMock).toHaveBeenCalledWith(run.outputDir);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(outcome).toEqual({ status: "output-too-large" });
+  });
+
+  it("stops measuring the output once the process has exited", async () => {
+    const child = fakeProcess();
+    const outcome = runGenerator(run);
+    await vi.waitFor(() => {
+      expect(spawnMock).toHaveBeenCalled();
+    });
+    child.emit("close", 0);
+    await outcome;
+    const checks = exceedsMock.mock.calls.length;
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(exceedsMock.mock.calls.length).toBe(checks);
   });
 
   it("runs java without a shell and reports success", async () => {

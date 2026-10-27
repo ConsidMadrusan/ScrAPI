@@ -84,6 +84,7 @@ describe("generateClient", () => {
   it.each([
     [{ status: "failed", exitCode: 1 }, 422, "generation-failed"],
     [{ status: "timeout" }, 422, "generation-timeout"],
+    [{ status: "output-too-large" }, 422, "output-too-large"],
     [{ status: "busy" }, 503, "generator-busy"],
     [{ status: "aborted" }, 503, "generation-aborted"],
     [{ status: "unavailable", reason: "missing-jar" }, 503, "generator-unavailable"],
