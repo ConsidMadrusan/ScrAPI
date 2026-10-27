@@ -17,7 +17,7 @@ The **MVP is implemented** (all four phases). Release is pending: no version tag
 - Integration guides: deterministic templates in `src/lib/guides/`, rendered in the UI (`src/components/guide/`) and as `INTEGRATION.md` in the ZIP, both from the same generation result.
 - The `typescript-fetch` template override in `generator-templates/`.
 - Sample specifications in `samples/specs/`, and shared test fixtures in `src/test/`.
-- The root `Dockerfile` and `.dockerignore`, and the CI, AI review, AI fix, and release workflows in `.github/workflows/`.
+- The root `Dockerfile` and `.dockerignore`, and the CI and release workflows in `.github/workflows/`.
 
 Do not assume any other script, command, folder, or package is present until you have verified it.
 
@@ -201,11 +201,9 @@ Image:
 
 Pipeline:
 
-There are exactly four workflows. Do not add others without user approval.
+There are exactly two workflows. Do not add others without user approval.
 
 - `.github/workflows/ci.yml` runs `npm run check` on pull requests and on pushes to `main`. It needs no Java, Docker, or secrets.
-- `.github/workflows/ai-review.yml` runs an advisory Claude code review on pull requests. It runs three parallel reviews (architecture, security, code quality), using prompts in `.github/ai-review/` that are read from the base branch (or from the pull request, with a note in the comment, while a prompt is not on the base branch yet). Each review keeps one PR comment up to date and also returns its findings as structured data. It skips the commit that merges an AI fix pull request. It is development tooling, not part of the application. Together with `ai-fix.yml`, it is the only workflow allowed to use a secret beyond `GITHUB_TOKEN`: the repository secret `ANTHROPIC_API_KEY`. The reviewers get read-only tools, and a plain shell step posts the comment.
-- `.github/workflows/ai-fix.yml` is a reusable workflow that `ai-review.yml` calls after its reviews. When they report findings at or above `FIX_MIN_SEVERITY` (default `medium`), Claude fixes them and the three reviews run again on the result, for at most five rounds (`.github/ai-review/fix-loop.sh`). The fixes are opened as a pull request into the reviewed pull request's branch, explaining what changed and why. The fixer may only edit files and run `npm run` check scripts; its changes to `.github/`, `docs/`, `package.json`, and `package-lock.json` are discarded, and the workflow, not Claude, commits and pushes. It is development tooling, not part of the application.
 - `.github/workflows/release-image.yml` is the release pipeline. It builds and pushes the image to `ghcr.io/<owner>/<repo>` when a `vX.Y.Z` tag is pushed, tagging `X.Y.Z`, `X.Y`, and `latest`.
 
 Rules for the release workflow:
@@ -217,7 +215,7 @@ Rules for the release workflow:
 
 ## Things you must not do
 
-- Add AI features or AI/LLM API dependencies to the application or its generation workflow. (The PR review workflow is development tooling and is allowed.)
+- Add AI features or AI/LLM API dependencies to the application or its generation workflow.
 - Add a database, authentication, billing, or unrelated features.
 - Replace the chosen stack or introduce a separate backend (Express, Python, .NET, etc.).
 - Add external dependencies without first explaining the need and getting user approval. Already approved: the technologies named above (Next.js, TypeScript, Tailwind CSS, shadcn/ui, Motion for React, Zod, optional Zustand) and OpenAPI Generator through the npm CLI `@openapitools/openapi-generator-cli`, plus a Java runtime in the Docker image. Also approved:
