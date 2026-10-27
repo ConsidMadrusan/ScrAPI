@@ -1,6 +1,7 @@
 export type SpecErrorCode =
   | "empty"
   | "too-large"
+  | "too-deep"
   | "not-json"
   | "yaml"
   | "not-object"
