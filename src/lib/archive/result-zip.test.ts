@@ -1,9 +1,9 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import { renderGuideMarkdown } from "@/lib/guides/markdown";
+import { GUIDE_FILE_NAME, renderGuideMarkdown } from "@/lib/guides/markdown";
 import { renderGuide } from "@/lib/guides/render";
 import { generationResult } from "@/test/generation-fixtures";
-import { buildResultZip, GUIDE_FILE_NAME } from "./result-zip";
+import { buildResultZip } from "./result-zip";
 
 describe("buildResultZip", () => {
   it("contains the generated files and the guide built from the same result", async () => {

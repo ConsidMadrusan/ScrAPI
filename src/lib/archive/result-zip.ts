@@ -1,9 +1,9 @@
-import { renderGuideMarkdown } from "@/lib/guides/markdown";
+import "server-only";
+
+import { GUIDE_FILE_NAME, renderGuideMarkdown } from "@/lib/guides/markdown";
 import type { Guide } from "@/lib/guides/types";
 import type { GenerateSuccess } from "@/lib/validation/responses";
 import { buildZip, type ArchiveEntry } from "./zip";
-
-export const GUIDE_FILE_NAME = "INTEGRATION.md";
 
 /** ZIP entries for a result: its files plus the guide, from the same result. */
 export function resultEntries(result: GenerateSuccess, guide: Guide): ArchiveEntry[] {

@@ -1,3 +1,4 @@
+import { specFailureStatus } from "@/lib/openapi/errors";
 import { isJsonObject } from "@/lib/openapi/json";
 import { validateSpecification } from "@/lib/openapi/validate";
 import { groupByTag } from "@/lib/selection/operations";
@@ -15,7 +16,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!input.success) return failure(400, problemsFromZod(input.error));
 
   const result = await validateSpecification(input.data.spec);
-  if (!result.ok) return failure(422, result.errors);
+  if (!result.ok) return failure(specFailureStatus(result.errors), result.errors);
 
   const { document, operations } = result.value;
   const info = isJsonObject(document.info) ? document.info : {};

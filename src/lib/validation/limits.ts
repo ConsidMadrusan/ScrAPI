@@ -10,6 +10,12 @@ export const MAX_SPEC_DEPTH = 128;
 /** Largest accepted request body: the specification plus options and selection. */
 export const MAX_REQUEST_BYTES = MAX_SPEC_BYTES + 512 * 1024;
 
+/**
+ * Largest accepted ZIP request: a generation result sent back for archiving.
+ * Generated output is capped at 20 MB; this leaves room for JSON escaping.
+ */
+export const MAX_ARCHIVE_REQUEST_BYTES = 48 * 1024 * 1024;
+
 /** Most operations a single generation request may select. */
 export const MAX_SELECTED_OPERATIONS = 5000;
 

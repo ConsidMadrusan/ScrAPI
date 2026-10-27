@@ -13,7 +13,8 @@ export type SpecErrorCode =
   | "unresolved-ref"
   | "invalid-spec"
   | "duplicate-operation-id"
-  | "no-operations";
+  | "no-operations"
+  | "validator-busy";
 
 /** A problem with the submitted specification, safe to show to the user. */
 export interface SpecError {
@@ -26,6 +27,14 @@ export interface SpecError {
 export type SpecResult<T> =
   | { ok: true; value: T }
   | { ok: false; errors: SpecError[] };
+
+/**
+ * HTTP status for a failed validation: 503 when the server was too busy to
+ * validate (the specification itself may be fine), otherwise 422.
+ */
+export function specFailureStatus(errors: readonly { code: string }[]): 422 | 503 {
+  return errors.some((error) => error.code === "validator-busy") ? 503 : 422;
+}
 
 /** Formats JSON pointer segments for display, e.g. `paths › /users › get`. */
 export function formatLocation(segments: readonly string[]): string {
