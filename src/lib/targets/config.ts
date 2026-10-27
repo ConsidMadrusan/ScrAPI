@@ -1,4 +1,4 @@
-import type { GenerationOptions } from "@/lib/validation/requests";
+import type { GenerationOptions, HttpClient } from "@/lib/validation/requests";
 
 /** How to run OpenAPI Generator for a target. All values are fixed, never user input. */
 export interface GeneratorSettings {
@@ -61,7 +61,7 @@ export function resolveTarget(options: GenerationOptions): TargetConfig {
   }
 }
 
-function typescriptTarget(httpClient: "axios" | "fetch", destinationRoot: string): TargetConfig {
+function typescriptTarget(httpClient: HttpClient, destinationRoot: string): TargetConfig {
   const common = { archiveRoot: "api-client", destinationRoot, sourceDir: "", extensions: [".ts"] };
   switch (httpClient) {
     case "axios":

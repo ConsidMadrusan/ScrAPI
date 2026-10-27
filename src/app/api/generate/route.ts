@@ -17,7 +17,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!prepared.ok) return failure(422, prepared.errors);
 
   try {
-    const result = await generateClient(prepared.value);
+    const result = await generateClient(prepared.value, request.signal);
     if (!result.ok) return failure(result.status, result.errors);
     return Response.json(result.value);
   } catch (error) {

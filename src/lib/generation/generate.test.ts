@@ -8,7 +8,7 @@ import type { PreparedGeneration } from "./prepare";
 const runGeneratorMock = vi.hoisted(() => vi.fn<(run: GeneratorRun) => Promise<GeneratorOutcome>>());
 vi.mock("./java-generator", () => ({ runGenerator: runGeneratorMock }));
 
-const { generateClient } = await import("./generate");
+const { generateClient, MAX_CONCURRENT_GENERATIONS } = await import("./generate");
 
 const prepared: PreparedGeneration = {
   options: { target: "typescript-next", httpClient: "fetch" },
@@ -95,6 +95,55 @@ describe("generateClient", () => {
     const result = await generateClient(prepared);
 
     expect(result).toEqual({ ok: false, status, errors: [expect.objectContaining({ code })] });
+    expect(existsSync(workDir())).toBe(false);
+  });
+
+  it("rejects requests over the concurrency limit without starting the generator", async () => {
+    runGeneratorMock.mockClear();
+    const release: (() => void)[] = [];
+    generatorThat(
+      () =>
+        new Promise((resolve) => {
+          release.push(() => {
+            resolve({ status: "failed", exitCode: 1 });
+          });
+        }),
+    );
+
+    const running = Array.from({ length: MAX_CONCURRENT_GENERATIONS }, () =>
+      generateClient(prepared),
+    );
+    await vi.waitFor(() => {
+      expect(release).toHaveLength(MAX_CONCURRENT_GENERATIONS);
+    });
+
+    const rejected = await generateClient(prepared);
+    expect(rejected).toEqual({
+      ok: false,
+      status: 503,
+      errors: [expect.objectContaining({ code: "generator-busy" })],
+    });
+    expect(runGeneratorMock).toHaveBeenCalledTimes(MAX_CONCURRENT_GENERATIONS);
+
+    release.forEach((done) => {
+      done();
+    });
+    await Promise.all(running);
+
+    // Slots are released afterwards.
+    generatorThat(() => Promise.resolve({ status: "timeout" }));
+    expect(await generateClient(prepared)).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("passes the abort signal to the generator and reports cancellation", async () => {
+    const controller = new AbortController();
+    generatorThat((run) => {
+      expect(run.signal).toBe(controller.signal);
+      return Promise.resolve({ status: "aborted" });
+    });
+
+    const result = await generateClient(prepared, controller.signal);
+    expect(result).toMatchObject({ ok: false, status: 499 });
     expect(existsSync(workDir())).toBe(false);
   });
 

@@ -116,24 +116,25 @@ describe("findDuplicateOperationIds", () => {
 });
 
 describe("resolveSelection", () => {
-  it("returns selected keys once each, in document order", () => {
+  function selectedIds(result: ReturnType<typeof resolveSelection>) {
+    return result.ok ? result.selected.map((operation) => operation.id) : result;
+  }
+
+  it("returns selected operations once each, in document order", () => {
     const result = resolveSelection(operations, [
       { method: "get", path: "/health" },
       { method: "post", path: "/books" },
       { method: "get", path: "/health" },
     ]);
-    expect(result).toEqual({
-      ok: true,
-      keys: [
-        { method: "post", path: "/books" },
-        { method: "get", path: "/health" },
-      ],
-    });
+    expect(selectedIds(result)).toEqual(["POST /books", "GET /health"]);
+    if (result.ok) {
+      expect(result.selected[0]).toBe(operations.find((op) => op.id === "POST /books"));
+    }
   });
 
   it("selects methods on the same path independently", () => {
     const result = resolveSelection(operations, [{ method: "post", path: "/books" }]);
-    expect(result).toEqual({ ok: true, keys: [{ method: "post", path: "/books" }] });
+    expect(selectedIds(result)).toEqual(["POST /books"]);
   });
 
   it("rejects an empty selection", () => {

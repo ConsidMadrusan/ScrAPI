@@ -2,6 +2,7 @@ import { isJsonObject, type JsonObject, type JsonValue } from "@/lib/openapi/jso
 import {
   formatOperationKey,
   HTTP_METHODS,
+  type HttpMethod,
   type OperationKey,
 } from "@/lib/validation/operation";
 
@@ -39,6 +40,11 @@ export function filterSpec(
   const kept = collectComponents(components, keptPaths, securityRefs);
 
   const result: JsonObject = { ...spec, paths: keptPaths };
+  // Root security only applies to operations without their own. When no kept
+  // operation inherits it, its schemes were not kept, so drop it as well.
+  if (!keptOperations.some((operation) => operation.security === undefined)) {
+    delete result.security;
+  }
   const keptComponentsObject = pickComponents(components, kept);
   if (keptComponentsObject === undefined) {
     delete result.components;
@@ -71,12 +77,12 @@ function selectOperations(
     const keptItem: JsonObject = {};
     let hasOperation = false;
     for (const [field, value] of Object.entries(pathItem)) {
-      if (!HTTP_METHOD_SET.has(field)) {
+      if (!isHttpMethod(field)) {
         // Path-level fields such as shared parameters apply to kept methods.
         keptItem[field] = value;
         continue;
       }
-      const key = `${field.toUpperCase()} ${path}`;
+      const key = formatOperationKey({ method: field, path });
       if (wanted.has(key)) {
         keptItem[field] = value;
         found.add(key);
@@ -101,6 +107,10 @@ function selectOperations(
     );
   }
   return keptPaths;
+}
+
+function isHttpMethod(field: string): field is HttpMethod {
+  return HTTP_METHOD_SET.has(field);
 }
 
 function listOperationObjects(paths: JsonObject): JsonObject[] {

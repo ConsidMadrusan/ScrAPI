@@ -6,7 +6,7 @@ import type { PreparedGeneration } from "@/lib/generation/prepare";
 import { generateResponseSchema } from "@/lib/validation/responses";
 
 const generateClientMock = vi.hoisted(() =>
-  vi.fn<(prepared: PreparedGeneration) => Promise<GenerateResult>>(),
+  vi.fn<(prepared: PreparedGeneration, signal?: AbortSignal) => Promise<GenerateResult>>(),
 );
 vi.mock("@/lib/generation/generate", () => ({ generateClient: generateClientMock }));
 
@@ -58,6 +58,8 @@ describe("POST /api/generate", () => {
     const prepared = generateClientMock.mock.calls[0]?.[0];
     expect(prepared?.filteredSpec.paths).toHaveProperty(["/todos", "get"]);
     expect(prepared?.filteredSpec.paths).not.toHaveProperty(["/todos", "post"]);
+    // The request's abort signal reaches generation, so a disconnect stops it.
+    expect(generateClientMock.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
   });
 
   it("rejects unknown operations before generating", async () => {

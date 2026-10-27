@@ -102,6 +102,30 @@ describe("runGenerator", () => {
     expect(outcome).toEqual({ status: "timeout" });
   });
 
+  it("kills the process when the signal aborts", async () => {
+    const child = fakeProcess();
+    const controller = new AbortController();
+    const outcome = runGenerator({ ...run, signal: controller.signal });
+    await vi.waitFor(() => {
+      expect(spawnMock).toHaveBeenCalled();
+    });
+    controller.abort();
+
+    expect(await outcome).toEqual({ status: "aborted" });
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("does not start anything when the signal is already aborted", async () => {
+    spawnMock.mockClear();
+    const controller = new AbortController();
+    controller.abort();
+
+    expect(await runGenerator({ ...run, signal: controller.signal })).toEqual({
+      status: "aborted",
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
   it("reports a missing Java runtime as unavailable", async () => {
     const child = fakeProcess();
     const outcome = runGenerator(run);

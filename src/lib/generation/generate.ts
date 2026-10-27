@@ -11,6 +11,16 @@ import { keepFirstTagOnly } from "./generator-input";
 import { runGenerator, type GeneratorOutcome } from "./java-generator";
 import type { PreparedGeneration } from "./prepare";
 
+/**
+ * Most generator processes (JVMs) running at once in this server process.
+ * Each JVM defaults to a maximum heap of a quarter of the container memory,
+ * so two runs plus the Node.js server fit the documented memory limit.
+ */
+export const MAX_CONCURRENT_GENERATIONS = 2;
+
+/** Process-wide resource counter, not request state: it holds no request data. */
+let activeGenerations = 0;
+
 export type GenerateResult =
   | { ok: true; value: GenerateSuccess }
   | { ok: false; status: number; errors: Problem[] };
@@ -18,8 +28,32 @@ export type GenerateResult =
 /**
  * Generates the client for a prepared request in a per-request temporary
  * folder, which is removed afterwards whether generation succeeds or fails.
+ * Rejects the request with 503 when the concurrency limit is reached, and
+ * stops the generator when `signal` aborts.
  */
-export async function generateClient(prepared: PreparedGeneration): Promise<GenerateResult> {
+export async function generateClient(
+  prepared: PreparedGeneration,
+  signal?: AbortSignal,
+): Promise<GenerateResult> {
+  if (activeGenerations >= MAX_CONCURRENT_GENERATIONS) {
+    return failure(
+      503,
+      "generator-busy",
+      "The server is busy generating other clients. Try again in a moment.",
+    );
+  }
+  activeGenerations += 1;
+  try {
+    return await generateInTempDir(prepared, signal);
+  } finally {
+    activeGenerations -= 1;
+  }
+}
+
+async function generateInTempDir(
+  prepared: PreparedGeneration,
+  signal: AbortSignal | undefined,
+): Promise<GenerateResult> {
   const target = resolveTarget(prepared.options);
   const startedAt = Date.now();
   const workDir = await mkdtemp(join(tmpdir(), "scrapi-"));
@@ -29,7 +63,12 @@ export async function generateClient(prepared: PreparedGeneration): Promise<Gene
     const outputDir = join(workDir, "output");
     await writeFile(specPath, JSON.stringify(keepFirstTagOnly(prepared.filteredSpec)), "utf8");
 
-    const outcome = await runGenerator({ settings: target.generator, specPath, outputDir });
+    const outcome = await runGenerator({
+      settings: target.generator,
+      specPath,
+      outputDir,
+      ...(signal === undefined ? {} : { signal }),
+    });
     if (outcome.status !== "ok") {
       // Metadata only: never the specification or generated code.
       console.warn("Generation failed", {
@@ -81,6 +120,8 @@ function generatorFailure(
         "generation-timeout",
         "Generation took too long and was stopped. Select fewer operations and try again.",
       );
+    case "aborted":
+      return failure(499, "generation-cancelled", "Generation was cancelled.");
     case "failed":
       return failure(
         422,
