@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { validateSpecification } from "./validate";
+import SwaggerParser from "@apidevtools/swagger-parser";
+import { describe, expect, it, vi } from "vitest";
+import { specFailureStatus } from "./errors";
+import { MAX_CONCURRENT_VALIDATIONS, validateSpecification } from "./validate";
 
 function sample(name: string): string {
   return readFileSync(join(process.cwd(), "samples/specs", name), "utf8");
@@ -79,5 +81,36 @@ describe("validateSpecification", () => {
         },
       ],
     });
+  });
+
+  it("rejects validations beyond the concurrency limit as busy, then accepts again", async () => {
+    const releases: (() => void)[] = [];
+    const validateSpy = vi.spyOn(SwaggerParser, "validate").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releases.push(() => {
+            resolve({} as never);
+          });
+        }),
+    );
+    try {
+      const running = Array.from({ length: MAX_CONCURRENT_VALIDATIONS }, () =>
+        validateSpecification(todo),
+      );
+      await vi.waitFor(() => {
+        expect(releases).toHaveLength(MAX_CONCURRENT_VALIDATIONS);
+      });
+
+      const busy = await validateSpecification(todo);
+      expect(busy).toEqual({ ok: false, errors: [expect.objectContaining({ code: "validator-busy" })] });
+      expect(!busy.ok && specFailureStatus(busy.errors)).toBe(503);
+
+      for (const release of releases) release();
+      for (const result of await Promise.all(running)) expect(result.ok).toBe(true);
+    } finally {
+      validateSpy.mockRestore();
+    }
+
+    expect((await validateSpecification(todo)).ok).toBe(true);
   });
 });

@@ -2,6 +2,9 @@ import type { GenerateSuccess } from "@/lib/validation/responses";
 import { renderTree } from "./tree";
 import type { Guide, GuideBlock } from "./types";
 
+/** Name of the Markdown guide at the root of the ZIP. */
+export const GUIDE_FILE_NAME = "INTEGRATION.md";
+
 /**
  * Renders the guide as Markdown for INTEGRATION.md in the ZIP. It contains the
  * same steps as the guide on the page; file contents are in the ZIP itself.

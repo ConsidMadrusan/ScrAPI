@@ -1,4 +1,9 @@
-import { formatMegabytes, MAX_SPEC_BYTES, utf8ByteLength } from "@/lib/validation/limits";
+import {
+  formatMegabytes,
+  MAX_SPEC_BYTES,
+  MAX_SPEC_DEPTH,
+  utf8ByteLength,
+} from "@/lib/validation/limits";
 import {
   formatLocation,
   pointerSegments,
@@ -48,6 +53,13 @@ export function parseSpecification(text: string): SpecResult<JsonObject> {
     });
   }
 
+  if (exceedsDepth(document, MAX_SPEC_DEPTH)) {
+    return fail({
+      code: "too-deep",
+      message: `The specification is nested more than ${String(MAX_SPEC_DEPTH)} levels deep.`,
+    });
+  }
+
   const versionError = checkVersion(document);
   if (versionError) return fail(versionError);
 
@@ -92,6 +104,25 @@ function jsonErrorLocation(message: string, content: string): string | undefined
   const line = before.length;
   const column = (before.at(-1)?.length ?? 0) + 1;
   return `line ${String(line)}, column ${String(column)}`;
+}
+
+/** Iterative, so a hostile document cannot overflow the stack while being measured. */
+function exceedsDepth(document: JsonObject, maxDepth: number): boolean {
+  const stack: { value: JsonValue; depth: number }[] = [{ value: document, depth: 1 }];
+  for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
+    if (item.depth > maxDepth) return true;
+    const children = Array.isArray(item.value)
+      ? item.value
+      : isJsonObject(item.value)
+        ? Object.values(item.value)
+        : [];
+    for (const child of children) {
+      if (typeof child === "object" && child !== null) {
+        stack.push({ value: child, depth: item.depth + 1 });
+      }
+    }
+  }
+  return false;
 }
 
 function checkVersion(document: JsonObject): SpecError | undefined {

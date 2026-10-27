@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_OUTPUT_FILES } from "./limits";
 import { httpMethodSchema } from "./operation";
 import { generationOptionsSchema } from "./requests";
 
@@ -72,7 +73,7 @@ export const generateSuccessSchema = z.object({
   archiveRoot: z.string(),
   destinationRoot: z.string(),
   operations: z.array(operationSummarySchema),
-  files: z.array(generatedFileSchema).min(1),
+  files: z.array(generatedFileSchema).min(1).max(MAX_OUTPUT_FILES),
 });
 export type GenerateSuccess = z.infer<typeof generateSuccessSchema>;
 
