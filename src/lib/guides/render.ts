@@ -1,3 +1,4 @@
+import { ANGULAR_APP_DIR, DOTNET_TARGET_FRAMEWORK } from "@/lib/targets/config";
 import type { GenerateSuccess } from "@/lib/validation/responses";
 import type { Guide, GuideBlock, GuideStep } from "./types";
 import { findUsageExample, pascalCase, type UsageExample } from "./usage";
@@ -55,9 +56,13 @@ const FRAMEWORKS = {
   },
 } as const;
 
-/** Angular CLI layout: the application folder and its providers file. */
-const ANGULAR_APP_DIR = "src/app";
+/** The Angular application's providers file, in the folder the client goes into. */
 const ANGULAR_APP_CONFIG = `${ANGULAR_APP_DIR}/app.config.ts`;
+
+/** `net10.0` → `10`: the .NET version the SDK and the user's project need. */
+const DOTNET_VERSION = DOTNET_TARGET_FRAMEWORK.replace(/^net(\d+)\.0$/, "$1");
+
+const DO_NOT_EDIT_NOTE = "Do not edit the generated files; generate them again when the API changes.";
 
 /** The import specifier for the destination folder through the framework's alias. */
 function aliasImportPath(destinationRoot: string, alias: { prefix: string; root: string }): string {
@@ -83,7 +88,6 @@ function typescriptGuide(
   // The example sits next to the client folder, so every path follows the destination.
   const importPath = aliasImportPath(result.destinationRoot, framework.alias);
   const exampleDir = parentDir(result.destinationRoot);
-  const exampleFile = usage ? `${exampleDir}/${kebabCase(usage.typeName)}-example.ts` : "";
   const commonErrors = [
     framework.aliasError(importPath, result.destinationRoot),
     ...(httpClient === "axios"
@@ -97,24 +101,11 @@ function typescriptGuide(
     title: `Add the TypeScript client to your ${framework.name} project`,
     placeholders: [BASE_URL_PLACEHOLDER],
     steps: [
-      {
-        title: "Check your project setup",
-        blocks: [
-          { kind: "text", text: "This guide assumes:" },
-          {
-            kind: "list",
-            items: [
-              ...framework.setup,
-              `The \`${httpClient}\` HTTP client, as chosen when generating.`,
-            ],
-          },
-          {
-            kind: "text",
-            text: "The steps add new files and make no changes to your existing application files.",
-          },
-        ],
-      },
-      addFilesStep(result, "Do not edit the generated files; generate them again when the API changes."),
+      setupStep(
+        [...framework.setup, `The \`${httpClient}\` HTTP client, as chosen when generating.`],
+        "The steps add new files and make no changes to your existing application files.",
+      ),
+      addFilesStep(result, DO_NOT_EDIT_NOTE),
       {
         title: "Install dependencies",
         blocks:
@@ -131,29 +122,18 @@ function typescriptGuide(
                 },
               ],
       },
-      usage
-        ? {
-            title: "Call an operation",
-            blocks: [
-              {
-                kind: "text",
-                text: `Create \`${exampleFile}\` with a configured client and a call to \`${usage.operation.id}\`. Replace \`${BASE_URL}\` with the base URL of the API.`,
-              },
-              {
-                kind: "code",
-                language: "ts",
-                file: exampleFile,
-                action: "create",
-                code: typescriptExample(usage, importPath, httpClient),
-              },
-              ...signatureNote(usage),
-              {
-                kind: "text",
-                text: "Every API class is created the same way and can be used from server or client code. If the API needs authentication, set the matching option (`accessToken` or `apiKey`) on `Configuration`.",
-              },
-            ],
-          }
-        : noUsageStep(),
+      callStep(usage, (found) => {
+        const file = `${exampleDir}/${kebabCase(found.typeName)}-example.ts`;
+        return {
+          intro: `Create \`${file}\` with a configured client and a call to \`${found.operation.id}\`. Replace \`${BASE_URL}\` with the base URL of the API.`,
+          file,
+          language: "ts",
+          code: typescriptExample(found, importPath, httpClient),
+          notes: [
+            "Every API class is created the same way and can be used from server or client code. If the API needs authentication, set the matching option (`accessToken` or `apiKey`) on `Configuration`.",
+          ],
+        };
+      }),
       verifyStep(framework.verify, commonErrors),
     ],
   };
@@ -161,7 +141,7 @@ function typescriptGuide(
 
 function typescriptExample(usage: UsageExample, importPath: string, httpClient: "axios" | "fetch"): string {
   const instance = lowerFirst(usage.typeName);
-  const call = `${instance}.${usage.methodName}(${usage.callableWithoutArguments ? "" : "/* TODO: required arguments */"})`;
+  const call = `${instance}.${usage.methodName}(${callArguments(usage)})`;
   const body =
     httpClient === "axios"
       ? [`  const response = await ${call};`, "  return response.data;"]
@@ -182,33 +162,21 @@ function typescriptExample(usage: UsageExample, importPath: string, httpClient: 
 }
 
 function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined): Guide {
-  const exampleClass = usage ? `${pascalCase(usage.methodName)}Example` : "";
-  // Both app.config.ts and the example live in `src/app/`, next to the client folder.
+  // Both app.config.ts and the example live in the app folder, next to the client folder.
   const importPath = aliasImportPath(result.destinationRoot, { prefix: "./", root: ANGULAR_APP_DIR });
-  const exampleFile = usage ? `${ANGULAR_APP_DIR}/${kebabCase(usage.methodName)}-example.ts` : "";
 
   return {
     title: "Add the TypeScript client to your Angular project",
     placeholders: [BASE_URL_PLACEHOLDER],
     steps: [
-      {
-        title: "Check your project setup",
-        blocks: [
-          { kind: "text", text: "This guide assumes:" },
-          {
-            kind: "list",
-            items: [
-              "An Angular 22 standalone application created with the Angular CLI.",
-              `Application providers in \`${ANGULAR_APP_CONFIG}\`.`,
-            ],
-          },
-          {
-            kind: "text",
-            text: "The steps add new files and make one small edit to `app.config.ts`.",
-          },
+      setupStep(
+        [
+          "An Angular 22 standalone application created with the Angular CLI.",
+          `Application providers in \`${ANGULAR_APP_CONFIG}\`.`,
         ],
-      },
-      addFilesStep(result, "Do not edit the generated files; generate them again when the API changes."),
+        "The steps add new files and make one small edit to `app.config.ts`.",
+      ),
+      addFilesStep(result, DO_NOT_EDIT_NOTE),
       {
         title: "Register the HTTP client and the API",
         blocks: [
@@ -221,20 +189,7 @@ function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined):
             language: "ts",
             file: ANGULAR_APP_CONFIG,
             action: "edit",
-            code: [
-              'import { provideHttpClient } from "@angular/common/http";',
-              `import { provideApi } from "${importPath}";`,
-              "",
-              "export const appConfig: ApplicationConfig = {",
-              "  providers: [",
-              "    // ...your existing providers",
-              "    provideHttpClient(),",
-              `    // TODO: Replace ${BASE_URL} with the base URL of the API.`,
-              `    provideApi("${BASE_URL}"),`,
-              "  ],",
-              "};",
-              "",
-            ].join("\n"),
+            code: angularProviders(importPath),
           },
           {
             kind: "text",
@@ -242,39 +197,15 @@ function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined):
           },
         ],
       },
-      usage
-        ? {
-            title: "Call an operation",
-            blocks: [
-              {
-                kind: "text",
-                text: `Create \`${exampleFile}\` with a service that calls \`${usage.operation.id}\`. Inject it where you need the data.`,
-              },
-              {
-                kind: "code",
-                language: "ts",
-                file: exampleFile,
-                action: "create",
-                code: [
-                  'import { inject, Injectable } from "@angular/core";',
-                  `import { ${usage.typeName} } from "${importPath}";`,
-                  "",
-                  '@Injectable({ providedIn: "root" })',
-                  `export class ${exampleClass} {`,
-                  `  private readonly api = inject(${usage.typeName});`,
-                  "",
-                  `  ${usage.methodName}() {`,
-                  "    // Returns an Observable: subscribe to it or use the async pipe.",
-                  `    return this.api.${usage.methodName}(${usage.callableWithoutArguments ? "" : "/* TODO: required arguments */"});`,
-                  "  }",
-                  "}",
-                  "",
-                ].join("\n"),
-              },
-              ...signatureNote(usage),
-            ],
-          }
-        : noUsageStep(),
+      callStep(usage, (found) => {
+        const file = `${ANGULAR_APP_DIR}/${kebabCase(found.methodName)}-example.ts`;
+        return {
+          intro: `Create \`${file}\` with a service that calls \`${found.operation.id}\`. Inject it where you need the data.`,
+          file,
+          language: "ts",
+          code: angularExample(found, importPath),
+        };
+      }),
       verifyStep(
         ["npx ng build"],
         [
@@ -287,10 +218,44 @@ function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined):
   };
 }
 
+function angularProviders(importPath: string): string {
+  return [
+    'import { provideHttpClient } from "@angular/common/http";',
+    `import { provideApi } from "${importPath}";`,
+    "",
+    "export const appConfig: ApplicationConfig = {",
+    "  providers: [",
+    "    // ...your existing providers",
+    "    provideHttpClient(),",
+    `    // TODO: Replace ${BASE_URL} with the base URL of the API.`,
+    `    provideApi("${BASE_URL}"),`,
+    "  ],",
+    "};",
+    "",
+  ].join("\n");
+}
+
+function angularExample(usage: UsageExample, importPath: string): string {
+  return [
+    'import { inject, Injectable } from "@angular/core";',
+    `import { ${usage.typeName} } from "${importPath}";`,
+    "",
+    '@Injectable({ providedIn: "root" })',
+    `export class ${pascalCase(usage.methodName)}Example {`,
+    `  private readonly api = inject(${usage.typeName});`,
+    "",
+    `  ${usage.methodName}() {`,
+    "    // Returns an Observable: subscribe to it or use the async pipe.",
+    `    return this.api.${usage.methodName}(${callArguments(usage)});`,
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+}
+
 function csharpGuide(result: GenerateSuccess, usage: UsageExample | undefined): Guide {
-  const projectFile = `${result.destinationRoot}/${result.archiveRoot}.csproj`;
-  const exampleClass = usage ? `${usage.typeName.replace(/^I(?=[A-Z])/, "")}Example` : "";
-  const packages = packageReferences(result);
+  // The archive root is the generated project's name and root namespace.
+  const project = result.archiveRoot;
 
   return {
     title: "Add the C# client to your .NET solution",
@@ -299,42 +264,16 @@ function csharpGuide(result: GenerateSuccess, usage: UsageExample | undefined): 
       { token: PROJECT, description: "The folder and project file name of your application project." },
     ],
     steps: [
-      {
-        title: "Check your project setup",
-        blocks: [
-          { kind: "text", text: "This guide assumes:" },
-          {
-            kind: "list",
-            items: [
-              "The .NET 10 SDK. The client project targets `net10.0`, so the project that uses it must target `net10.0` as well.",
-              "A solution with your application project. The client becomes a separate project in `src/` next to it.",
-              "An application that uses the .NET generic host, for example ASP.NET Core or a worker service (`builder.Services`).",
-            ],
-          },
-          {
-            kind: "text",
-            text: "The steps add a new project and make one small edit to `Program.cs`.",
-          },
+      setupStep(
+        [
+          `The .NET ${DOTNET_VERSION} SDK. The client project targets \`${DOTNET_TARGET_FRAMEWORK}\`, so the project that uses it must target \`${DOTNET_TARGET_FRAMEWORK}\` as well.`,
+          "A solution with your application project. The client becomes a separate project in `src/` next to it.",
+          "An application that uses the .NET generic host, for example ASP.NET Core or a worker service (`builder.Services`).",
         ],
-      },
-      addFilesStep(result, "Do not edit the generated files; generate them again when the API changes."),
-      {
-        title: "Add the project to your solution",
-        blocks: [
-          { kind: "text", text: "From the solution folder, add the client project and reference it from your application project:" },
-          { kind: "command", command: `dotnet sln add ${projectFile}` },
-          { kind: "command", command: `dotnet add ${PROJECT}/${PROJECT}.csproj reference ${projectFile}` },
-          ...(packages.length > 0
-            ? ([
-                {
-                  kind: "text",
-                  text: `\`${result.archiveRoot}.csproj\` already references these NuGet packages. They are restored on the next build:`,
-                },
-                { kind: "list", items: packages },
-              ] satisfies GuideBlock[])
-            : []),
-        ],
-      },
+        "The steps add a new project and make one small edit to `Program.cs`.",
+      ),
+      addFilesStep(result, DO_NOT_EDIT_NOTE),
+      csharpSolutionStep(result),
       {
         title: "Register the API",
         blocks: [
@@ -347,19 +286,7 @@ function csharpGuide(result: GenerateSuccess, usage: UsageExample | undefined): 
             language: "csharp",
             file: `${PROJECT}/Program.cs`,
             action: "edit",
-            code: [
-              `using ${result.archiveRoot}.Extensions;`,
-              "",
-              "builder.ConfigureApi(options =>",
-              "{",
-              "    options.AddApiHttpClients((HttpClient client) =>",
-              "    {",
-              `        // TODO: Replace ${BASE_URL} with the base URL of the API.`,
-              `        client.BaseAddress = new Uri("${BASE_URL}");`,
-              "    });",
-              "});",
-              "",
-            ].join("\n"),
+            code: csharpRegistration(project),
           },
           {
             kind: "text",
@@ -367,47 +294,121 @@ function csharpGuide(result: GenerateSuccess, usage: UsageExample | undefined): 
           },
         ],
       },
-      usage
-        ? {
-            title: "Call an operation",
-            blocks: [
-              {
-                kind: "text",
-                text: `Create \`${PROJECT}/${exampleClass}.cs\`, which receives \`${usage.typeName}\` through dependency injection and calls \`${usage.operation.id}\`. Register it with \`builder.Services.AddTransient<${exampleClass}>();\` or inject \`${usage.typeName}\` into your own services and controllers.`,
-              },
-              {
-                kind: "code",
-                language: "csharp",
-                file: `${PROJECT}/${exampleClass}.cs`,
-                action: "create",
-                code: [
-                  `using ${result.archiveRoot}.Api;`,
-                  "",
-                  `public sealed class ${exampleClass}(${usage.typeName} api)`,
-                  "{",
-                  "    public async Task RunAsync()",
-                  "    {",
-                  `        var response = await api.${usage.methodName}(${usage.callableWithoutArguments ? "" : "/* TODO: required arguments */"});`,
-                  `        // TODO: Check the response. Its interface in ${result.archiveRoot}/Api lists the available checks, such as IsOk and Ok().`,
-                  "    }",
-                  "}",
-                  "",
-                ].join("\n"),
-              },
-              ...signatureNote(usage),
-            ],
-          }
-        : noUsageStep(),
+      callStep(usage, (found) => {
+        const exampleClass = `${found.typeName.replace(/^I(?=[A-Z])/, "")}Example`;
+        return {
+          intro: `Create \`${PROJECT}/${exampleClass}.cs\`, which receives \`${found.typeName}\` through dependency injection and calls \`${found.operation.id}\`. Register it with \`builder.Services.AddTransient<${exampleClass}>();\` or inject \`${found.typeName}\` into your own services and controllers.`,
+          file: `${PROJECT}/${exampleClass}.cs`,
+          language: "csharp",
+          code: csharpExample(found, project, exampleClass),
+        };
+      }),
       verifyStep(
         ["dotnet build"],
         [
-          "NETSDK1045 (the current .NET SDK does not support targeting .NET 10.0): install the .NET 10 SDK.",
-          "NU1201 (project ApiClient is not compatible with your project's framework): your project must target `net10.0` as well.",
+          `NETSDK1045 (the current .NET SDK does not support targeting .NET ${DOTNET_VERSION}.0): install the .NET ${DOTNET_VERSION} SDK.`,
+          `NU1201 (project ${project} is not compatible with your project's framework): your project must target \`${DOTNET_TARGET_FRAMEWORK}\` as well.`,
           "No service for type '...Api' has been registered: call `builder.ConfigureApi(...)` in `Program.cs` before `builder.Build()`.",
         ],
       ),
     ],
   };
+}
+
+function csharpSolutionStep(result: GenerateSuccess): GuideStep {
+  const projectFile = `${result.destinationRoot}/${result.archiveRoot}.csproj`;
+  const packages = packageReferences(result);
+  return {
+    title: "Add the project to your solution",
+    blocks: [
+      { kind: "text", text: "From the solution folder, add the client project and reference it from your application project:" },
+      { kind: "command", command: `dotnet sln add ${projectFile}` },
+      { kind: "command", command: `dotnet add ${PROJECT}/${PROJECT}.csproj reference ${projectFile}` },
+      ...(packages.length > 0
+        ? ([
+            {
+              kind: "text",
+              text: `\`${result.archiveRoot}.csproj\` already references these NuGet packages. They are restored on the next build:`,
+            },
+            { kind: "list", items: packages },
+          ] satisfies GuideBlock[])
+        : []),
+    ],
+  };
+}
+
+function csharpRegistration(project: string): string {
+  return [
+    `using ${project}.Extensions;`,
+    "",
+    "builder.ConfigureApi(options =>",
+    "{",
+    "    options.AddApiHttpClients((HttpClient client) =>",
+    "    {",
+    `        // TODO: Replace ${BASE_URL} with the base URL of the API.`,
+    `        client.BaseAddress = new Uri("${BASE_URL}");`,
+    "    });",
+    "});",
+    "",
+  ].join("\n");
+}
+
+function csharpExample(usage: UsageExample, project: string, exampleClass: string): string {
+  return [
+    `using ${project}.Api;`,
+    "",
+    `public sealed class ${exampleClass}(${usage.typeName} api)`,
+    "{",
+    "    public async Task RunAsync()",
+    "    {",
+    `        var response = await api.${usage.methodName}(${callArguments(usage)});`,
+    `        // TODO: Check the response. Its interface in ${project}/Api lists the available checks, such as IsOk and Ok().`,
+    "    }",
+    "}",
+    "",
+  ].join("\n");
+}
+
+/** The "Check your project setup" step: the assumed project layout and what the guide changes. */
+function setupStep(assumptions: readonly string[], changes: string): GuideStep {
+  return {
+    title: "Check your project setup",
+    blocks: [
+      { kind: "text", text: "This guide assumes:" },
+      { kind: "list", items: [...assumptions] },
+      { kind: "text", text: changes },
+    ],
+  };
+}
+
+/** A new example file that calls the generated method. */
+interface CallExample {
+  intro: string;
+  file: string;
+  language: "ts" | "csharp";
+  code: string;
+  /** Extra text after the example and its signature note. */
+  notes?: readonly string[];
+}
+
+/** The "Call an operation" step, or an explanation when no generated method was found. */
+function callStep(usage: UsageExample | undefined, example: (usage: UsageExample) => CallExample): GuideStep {
+  if (!usage) return noUsageStep();
+  const { intro, file, language, code, notes = [] } = example(usage);
+  return {
+    title: "Call an operation",
+    blocks: [
+      { kind: "text", text: intro },
+      { kind: "code", language, file, action: "create", code },
+      ...signatureNote(usage),
+      ...notes.map((text): GuideBlock => ({ kind: "text", text })),
+    ],
+  };
+}
+
+/** The argument list of the example call: empty, or a TODO the user must fill in. */
+function callArguments(usage: UsageExample): string {
+  return usage.callableWithoutArguments ? "" : "/* TODO: required arguments */";
 }
 
 /** One step for all generated files: they are copied as one folder. */

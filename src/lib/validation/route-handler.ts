@@ -7,6 +7,50 @@ export function failure(status: number, errors: Problem[]): Response {
   return Response.json(response, { status });
 }
 
+/** Counts running requests of one kind. A process-wide resource counter that holds no request data. */
+export interface ConcurrencyLimiter {
+  /** Takes a slot and returns the function that frees it, or `undefined` when every slot is taken. */
+  tryAcquire(): (() => void) | undefined;
+}
+
+export function createConcurrencyLimiter(max: number): ConcurrencyLimiter {
+  let active = 0;
+  return {
+    tryAcquire() {
+      if (active >= max) return undefined;
+      active += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        active -= 1;
+      };
+    },
+  };
+}
+
+/**
+ * Wraps a Route Handler so it runs only while it holds a slot from `limiter`.
+ * The slot is taken before the body is read or parsed, so a busy server
+ * answers 503 with `busy` without doing that work, and it is freed when the
+ * handler finishes or throws.
+ */
+export function withConcurrencyLimit(
+  limiter: ConcurrencyLimiter,
+  busy: Problem,
+  handler: (request: Request) => Promise<Response>,
+): (request: Request) => Promise<Response> {
+  return async (request) => {
+    const release = limiter.tryAcquire();
+    if (!release) return failure(503, [busy]);
+    try {
+      return await handler(request);
+    } finally {
+      release();
+    }
+  };
+}
+
 export interface ProblemHandlingOptions {
   /** Logged with the error type when the handler throws, e.g. `Generation crashed`. */
   logMessage: string;

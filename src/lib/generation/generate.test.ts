@@ -23,7 +23,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const { generateClient, MAX_CONCURRENT_GENERATIONS, withTempDir } = await import("./generate");
+const { generateClient, withTempDir } = await import("./generate");
 
 const prepared: PreparedGeneration = {
   options: { target: "typescript-next", httpClient: "fetch" },
@@ -111,43 +111,6 @@ describe("generateClient", () => {
 
     expect(result).toEqual({ ok: false, status, errors: [expect.objectContaining({ code })] });
     expect(existsSync(workDir())).toBe(false);
-  });
-
-  it("rejects requests over the concurrency limit without starting the generator", async () => {
-    runGeneratorMock.mockClear();
-    const release: (() => void)[] = [];
-    generatorThat(
-      () =>
-        new Promise((resolve) => {
-          release.push(() => {
-            resolve({ status: "failed", exitCode: 1 });
-          });
-        }),
-    );
-
-    const running = Array.from({ length: MAX_CONCURRENT_GENERATIONS }, () =>
-      generateClient(prepared),
-    );
-    await vi.waitFor(() => {
-      expect(release).toHaveLength(MAX_CONCURRENT_GENERATIONS);
-    });
-
-    const rejected = await generateClient(prepared);
-    expect(rejected).toEqual({
-      ok: false,
-      status: 503,
-      errors: [expect.objectContaining({ code: "generator-busy" })],
-    });
-    expect(runGeneratorMock).toHaveBeenCalledTimes(MAX_CONCURRENT_GENERATIONS);
-
-    release.forEach((done) => {
-      done();
-    });
-    await Promise.all(running);
-
-    // Slots are released afterwards.
-    generatorThat(() => Promise.resolve({ status: "timeout" }));
-    expect(await generateClient(prepared)).toMatchObject({ ok: false, status: 422 });
   });
 
   it("passes the abort signal to the generator and reports cancellation", async () => {

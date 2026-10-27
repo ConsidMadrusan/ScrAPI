@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ANGULAR_APP_DIR, DOTNET_TARGET_FRAMEWORK, resolveTarget } from "@/lib/targets/config";
 import { ALL_OPTIONS, generationResult, TODO_OPERATIONS } from "@/test/generation-fixtures";
 import { renderGuideMarkdown } from "./markdown";
 import { renderGuide } from "./render";
@@ -16,6 +17,26 @@ function codeAndCommands(guide: Guide): string {
 }
 
 describe("renderGuide", () => {
+  it("takes the .NET framework and project name from the C# target configuration", () => {
+    const result = generationResult({ target: "csharp" });
+    const text = JSON.stringify(renderGuide(result));
+    const { generator, archiveRoot } = resolveTarget(result.options);
+
+    expect(generator.additionalProperties.targetFramework).toBe(DOTNET_TARGET_FRAMEWORK);
+    expect(text).toContain(`\`${DOTNET_TARGET_FRAMEWORK}\``);
+    expect(text).toContain(`project ${archiveRoot} is not compatible`);
+  });
+
+  it("edits app.config.ts in the Angular folder that holds the client", () => {
+    const result = generationResult({ target: "typescript-angular" });
+    const editedFiles = blocks(renderGuide(result)).flatMap((block) =>
+      block.kind === "code" && block.action === "edit" ? [block.file] : [],
+    );
+
+    expect(resolveTarget(result.options).destinationRoot.startsWith(`${ANGULAR_APP_DIR}/`)).toBe(true);
+    expect(editedFiles).toEqual([`${ANGULAR_APP_DIR}/app.config.ts`]);
+  });
+
   it.each(ALL_OPTIONS)("covers every generated file exactly once for %j", (options) => {
     const result = generationResult(options);
     const guide = renderGuide(result);

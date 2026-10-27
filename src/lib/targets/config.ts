@@ -24,6 +24,18 @@ export interface TargetConfig {
 /** Generator global properties for every target: no generated docs or tests. */
 export const GLOBAL_PROPERTIES = "apiTests=false,modelTests=false,apiDocs=false,modelDocs=false";
 
+/**
+ * Angular CLI application folder. The client folder goes inside it, and the
+ * guide edits `app.config.ts` and creates its example there.
+ */
+export const ANGULAR_APP_DIR = "src/app";
+
+/** Target framework of the generated C# project; the user's project must match it. */
+export const DOTNET_TARGET_FRAMEWORK = "net10.0";
+
+/** Name of the generated C# project: its folder, project file, and root namespace. */
+const CSHARP_PROJECT = "ApiClient";
+
 /** Verified with OpenAPI Generator 7.26.0 (see CLAUDE.md, "Generated output targets"). */
 export function resolveTarget(options: GenerationOptions): TargetConfig {
   switch (options.target) {
@@ -38,7 +50,7 @@ export function resolveTarget(options: GenerationOptions): TargetConfig {
           additionalProperties: { ngVersion: "22.0.0" },
         },
         archiveRoot: "api-client",
-        destinationRoot: "src/app/api-client",
+        destinationRoot: `${ANGULAR_APP_DIR}/api-client`,
         sourceDir: "",
         extensions: [".ts"],
       };
@@ -48,14 +60,14 @@ export function resolveTarget(options: GenerationOptions): TargetConfig {
           generatorName: "csharp",
           additionalProperties: {
             library: "generichost",
-            targetFramework: "net10.0",
+            targetFramework: DOTNET_TARGET_FRAMEWORK,
             nullableReferenceTypes: "true",
-            packageName: "ApiClient",
+            packageName: CSHARP_PROJECT,
           },
         },
-        archiveRoot: "ApiClient",
-        destinationRoot: "src/ApiClient",
-        sourceDir: "src/ApiClient",
+        archiveRoot: CSHARP_PROJECT,
+        destinationRoot: `src/${CSHARP_PROJECT}`,
+        sourceDir: `src/${CSHARP_PROJECT}`,
         extensions: [".cs", ".csproj"],
       };
   }

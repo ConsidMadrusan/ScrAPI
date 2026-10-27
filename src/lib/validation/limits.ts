@@ -7,6 +7,21 @@ export const MAX_REQUEST_BYTES = MAX_SPEC_BYTES + 512 * 1024;
 /** Most operations a single generation request may select. */
 export const MAX_SELECTED_OPERATIONS = 5000;
 
+/**
+ * Most generation requests handled at once in this server process, from
+ * reading the body to the end of generation. Each generator JVM defaults to a
+ * maximum heap of a quarter of the container memory, so two runs plus the
+ * Node.js server fit the documented memory limit.
+ */
+export const MAX_CONCURRENT_GENERATIONS = 2;
+
+/**
+ * Most validation requests handled at once in this server process. Each one
+ * holds a specification of up to MAX_SPEC_BYTES, its parsed form, and the
+ * validator's dereferenced copy in memory.
+ */
+export const MAX_CONCURRENT_VALIDATIONS = 4;
+
 export function utf8ByteLength(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }

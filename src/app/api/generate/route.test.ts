@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerateResult } from "@/lib/generation/generate";
 import type { PreparedGeneration } from "@/lib/generation/prepare";
+import { MAX_CONCURRENT_GENERATIONS } from "@/lib/validation/limits";
 import { generateResponseSchema } from "@/lib/validation/responses";
 
 const generateClientMock = vi.hoisted(() =>
@@ -92,6 +93,40 @@ describe("POST /api/generate", () => {
 
     const response = await post(request);
     expect(response.status).toBe(422);
+  });
+
+  it("answers 503 before reading the request while every generation slot is taken", async () => {
+    generateClientMock.mockClear();
+    const release: (() => void)[] = [];
+    generateClientMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release.push(() => {
+            resolve({ ok: false, status: 422, errors: [{ code: "generation-failed", message: "Failed." }] });
+          });
+        }),
+    );
+
+    const running = Array.from({ length: MAX_CONCURRENT_GENERATIONS }, () => post(request));
+    await vi.waitFor(() => {
+      expect(release).toHaveLength(MAX_CONCURRENT_GENERATIONS);
+    });
+
+    // An invalid body proves the request is rejected before it is read or validated.
+    const rejected = await post({ not: "a generate request" });
+    expect(rejected.status).toBe(503);
+    expect(generateResponseSchema.parse(await rejected.json())).toEqual({
+      ok: false,
+      errors: [expect.objectContaining({ code: "generator-busy" })],
+    });
+
+    release.forEach((done) => {
+      done();
+    });
+    await Promise.all(running);
+
+    // Slots are freed afterwards.
+    expect((await post({ not: "a generate request" })).status).toBe(400);
   });
 
   it("hides unexpected errors behind a generic message", async () => {
