@@ -6,12 +6,11 @@
       "items": {
         "type": "object",
         "properties": {
-          "finding": { "type": "string" },
+          "files": { "type": "array", "items": { "type": "string" } },
           "change": { "type": "string" },
-          "reason": { "type": "string" },
-          "files": { "type": "array", "items": { "type": "string" } }
+          "reason": { "type": "string" }
         },
-        "required": ["finding", "change", "reason", "files"],
+        "required": ["files", "change", "reason"],
         "additionalProperties": false
       }
     },

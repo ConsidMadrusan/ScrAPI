@@ -1,7 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "review": { "type": "string" },
+    "summary": { "type": "string" },
     "findings": {
       "type": "array",
       "items": {
@@ -13,15 +13,14 @@
           },
           "file": { "type": "string" },
           "line": { "type": "integer" },
-          "title": { "type": "string" },
-          "details": { "type": "string" },
-          "suggestion": { "type": "string" }
+          "problem": { "type": "string" },
+          "fix": { "type": "string" }
         },
-        "required": ["severity", "file", "title", "details"],
+        "required": ["severity", "file", "problem", "fix"],
         "additionalProperties": false
       }
     }
   },
-  "required": ["review", "findings"],
+  "required": ["summary", "findings"],
   "additionalProperties": false
 }

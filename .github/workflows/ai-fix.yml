@@ -113,8 +113,28 @@ jobs:
             draft=()
             # A fix that breaks npm run check is opened as a draft.
             [ "${CHECK_PASSED}" = true ] || draft=(--draft)
-            url="$(gh pr create --repo "${REPO}" --base "${HEAD_REF}" --head "${branch}" \
-              --title "${title}" --body-file "${WORK_DIR}/pr-body.md" "${draft[@]}")"
+            if ! url="$(gh pr create --repo "${REPO}" --base "${HEAD_REF}" --head "${branch}" \
+              --title "${title}" --body-file "${WORK_DIR}/pr-body.md" "${draft[@]}")"; then
+              # Usually the setting "Allow GitHub Actions to create and approve
+              # pull requests" is off. The branch is pushed, so link to it.
+              echo "::error::Could not open the fix pull request. Enable Settings > Actions > General > Allow GitHub Actions to create and approve pull requests."
+              compare_url="${GITHUB_SERVER_URL}/${REPO}/compare/${HEAD_REF}...${branch}?expand=1"
+              marker="<!-- ai-fix -->"
+              {
+                echo "${marker}"
+                echo "### AI review fixes"
+                echo
+                echo "Fixes are on \`${branch}\`, but GitHub Actions may not open pull requests here. [Open it yourself](${compare_url}) with the description below, or enable *Settings → Actions → General → Allow GitHub Actions to create and approve pull requests*."
+                echo
+                echo "<details><summary>Description</summary>"
+                echo
+                cat "${WORK_DIR}/pr-body.md"
+                echo
+                echo "</details>"
+              } > "${WORK_DIR}/comment.md"
+              bash .github/ai-review/upsert-comment.sh "${marker}" "${WORK_DIR}/comment.md"
+              exit 1
+            fi
             fix_pr="${url##*/}"
           fi
 
@@ -128,9 +148,9 @@ jobs:
           marker="<!-- ai-fix -->"
           {
             echo "${marker}"
-            echo "## AI review fixes"
+            echo "### AI review fixes"
             echo
-            echo "Fixes for the review findings on commit ${HEAD_SHA} are in #${fix_pr}. Merge it into \`${HEAD_REF}\` to apply them; the merge is not reviewed again."
+            echo "Fixes for commit ${HEAD_SHA:0:7}: #${fix_pr}"
           } > "${WORK_DIR}/comment.md"
           bash .github/ai-review/upsert-comment.sh "${marker}" "${WORK_DIR}/comment.md"
 
@@ -140,10 +160,10 @@ jobs:
           marker="<!-- ai-fix -->"
           {
             echo "${marker}"
-            echo "## AI review fixes"
+            echo "### AI review fixes"
             echo
-            echo "The fix workflow made no changes for commit ${HEAD_SHA}. The findings in the reviews above need a person."
+            echo "No automatic fixes for commit ${HEAD_SHA:0:7}; the findings above need a person."
             echo
-            sed -n '/^## What changed and why/,$p' "${WORK_DIR}/pr-body.md"
+            sed -n '/^### Not fixed/,$p' "${WORK_DIR}/pr-body.md"
           } > "${WORK_DIR}/comment.md"
           bash .github/ai-review/upsert-comment.sh "${marker}" "${WORK_DIR}/comment.md"
