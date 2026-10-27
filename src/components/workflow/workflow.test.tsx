@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { JsonObject } from "@/lib/openapi/json";
 import { groupByTag, listOperations } from "@/lib/selection/operations";
-import type { FailureResponse, ValidateSuccess } from "@/lib/validation/responses";
+import type { FailureResponse, GenerateSuccess, ValidateSuccess } from "@/lib/validation/responses";
 import { Workflow } from "./workflow";
 
 const todoText = readFileSync(join(process.cwd(), "samples/specs/todo.json"), "utf8");
@@ -20,8 +20,18 @@ const success: ValidateSuccess = {
   groups: groupByTag(todo, operations),
 };
 
-function mockFetch(body: ValidateSuccess | FailureResponse, status = 200) {
-  const fetchMock = vi.fn(() => Promise.resolve(Response.json(body, { status })));
+interface Reply {
+  body: ValidateSuccess | GenerateSuccess | FailureResponse;
+  status?: number;
+}
+
+/** Answers /api/validate and /api/generate with fixed replies and records requests. */
+function mockFetch(validate: Reply["body"], validateStatus = 200, generate?: Reply) {
+  const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url) => {
+    const reply: Reply =
+      url === "/api/generate" && generate ? generate : { body: validate, status: validateStatus };
+    return Promise.resolve(Response.json(reply.body, { status: reply.status ?? 200 }));
+  });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
@@ -119,5 +129,116 @@ describe("Workflow", () => {
     await validate(user);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/could not be reached/);
+  });
+
+  describe("generation", () => {
+    const generated: GenerateSuccess = {
+      ok: true,
+      options: { target: "typescript-next", httpClient: "axios" },
+      archiveRoot: "api-client",
+      destinationRoot: "src/lib/api-client",
+      operations: operations.slice(0, 1),
+      files: [
+        {
+          archivePath: "api-client/api/todos-api.ts",
+          destinationPath: "src/lib/api-client/api/todos-api.ts",
+          content: "export class TodosApi {}",
+        },
+      ],
+    };
+
+    async function validatedWorkflow(generate: Reply) {
+      const fetchMock = mockFetch(success, 200, generate);
+      const user = userEvent.setup();
+      render(<Workflow />);
+      enterSpec(todoText);
+      await validate(user);
+      await screen.findByRole("heading", { name: "4. Generate" });
+      return { fetchMock, user };
+    }
+
+    it("is only possible with at least one selected operation", async () => {
+      const { user } = await validatedWorkflow({ body: generated });
+      const generateButton = screen.getByRole("button", { name: "Generate code" });
+
+      expect(generateButton).toBeDisabled();
+      expect(screen.getByText("Select at least one operation.")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("checkbox", { name: "GET /todos – List todos" }));
+      expect(generateButton).toBeEnabled();
+    });
+
+    it("sends the target, client, and selected operations and shows the result", async () => {
+      const { fetchMock, user } = await validatedWorkflow({ body: generated });
+      await user.click(screen.getByRole("radio", { name: /^fetch/ }));
+      await user.click(screen.getByRole("checkbox", { name: "DELETE /todos/{todoId} – Delete a todo" }));
+      await user.click(screen.getByRole("checkbox", { name: "GET /todos – List todos" }));
+
+      await user.click(screen.getByRole("button", { name: "Generate code" }));
+
+      expect(await screen.findByText(/Generated 1 files for/)).toBeInTheDocument();
+      const generateCall = fetchMock.mock.calls.find(([url]) => url === "/api/generate");
+      const sentBody = generateCall?.[1]?.body;
+      expect(typeof sentBody === "string" ? JSON.parse(sentBody) : undefined).toEqual({
+        spec: todoText,
+        options: { target: "typescript-next", httpClient: "fetch" },
+        selection: [
+          { method: "get", path: "/todos" },
+          { method: "delete", path: "/todos/{todoId}" },
+        ],
+      });
+      expect(
+        screen.getByRole("heading", { name: "Add the TypeScript client to your Next.js project" }),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      await user.click(await screen.findByText(/Where each file from the ZIP goes/));
+      const table = screen.getByRole("table");
+      expect(within(table).getByText("src/lib/api-client/api/todos-api.ts")).toBeInTheDocument();
+    });
+
+    it("clears the result when the selection or target changes", async () => {
+      const { user } = await validatedWorkflow({ body: generated });
+      const operation = screen.getByRole("checkbox", { name: "GET /todos – List todos" });
+      await user.click(operation);
+      await user.click(screen.getByRole("button", { name: "Generate code" }));
+      await screen.findByRole("button", { name: "Download ZIP" });
+
+      await user.click(screen.getByRole("checkbox", { name: "POST /todos – Create a todo" }));
+      expect(screen.queryByRole("button", { name: "Download ZIP" })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Generate code" }));
+      await screen.findByRole("button", { name: "Download ZIP" });
+      await user.click(screen.getByRole("radio", { name: /C# \/ \.NET/ }));
+      expect(screen.queryByRole("button", { name: "Download ZIP" })).not.toBeInTheDocument();
+    });
+
+    it("downloads a ZIP built from the shown result", async () => {
+      const createObjectURL = vi.fn<(blob: Blob) => string>(() => "blob:scrapi");
+      vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
+      const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      const { user } = await validatedWorkflow({ body: generated });
+      await user.click(screen.getByRole("checkbox", { name: "GET /todos – List todos" }));
+      await user.click(screen.getByRole("button", { name: "Generate code" }));
+
+      await user.click(await screen.findByRole("button", { name: "Download ZIP" }));
+
+      await vi.waitFor(() => {
+        expect(click).toHaveBeenCalledOnce();
+      });
+      const blob = createObjectURL.mock.calls[0]?.[0];
+      expect(blob?.type).toBe("application/zip");
+      expect(click.mock.contexts[0]).toHaveProperty("download", "api-client.zip");
+    });
+
+    it("shows generation problems", async () => {
+      const { user } = await validatedWorkflow({
+        body: { ok: false, errors: [{ code: "generation-timeout", message: "Generation took too long and was stopped." }] },
+        status: 422,
+      });
+      await user.click(screen.getByRole("checkbox", { name: "GET /todos – List todos" }));
+      await user.click(screen.getByRole("button", { name: "Generate code" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Generation took too long and was stopped.");
+    });
   });
 });

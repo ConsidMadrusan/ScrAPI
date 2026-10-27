@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { httpMethodSchema } from "./operation";
+import { generationOptionsSchema } from "./requests";
 
 /** A user-facing problem. Never contains stack traces or server details. */
 export const problemSchema = z.object({
@@ -16,6 +17,8 @@ export const operationSummarySchema = z.object({
   method: httpMethodSchema,
   path: z.string(),
   tags: z.array(z.string()),
+  /** Whether a call needs arguments (required parameters or a required body). */
+  requiresInput: z.boolean(),
   summary: z.string().optional(),
   operationId: z.string().optional(),
   deprecated: z.boolean().optional(),
@@ -53,3 +56,28 @@ export const validateResponseSchema = z.discriminatedUnion("ok", [
   failureResponseSchema,
 ]);
 export type ValidateResponse = z.infer<typeof validateResponseSchema>;
+
+/** One generated file, with its path in the ZIP and in the supported project layout. */
+export const generatedFileSchema = z.object({
+  archivePath: z.string(),
+  destinationPath: z.string(),
+  content: z.string(),
+});
+export type GeneratedFile = z.infer<typeof generatedFileSchema>;
+
+/** The single generation result that both the ZIP and the guide are built from. */
+export const generateSuccessSchema = z.object({
+  ok: z.literal(true),
+  options: generationOptionsSchema,
+  archiveRoot: z.string(),
+  destinationRoot: z.string(),
+  operations: z.array(operationSummarySchema),
+  files: z.array(generatedFileSchema).min(1),
+});
+export type GenerateSuccess = z.infer<typeof generateSuccessSchema>;
+
+export const generateResponseSchema = z.discriminatedUnion("ok", [
+  generateSuccessSchema,
+  failureResponseSchema,
+]);
+export type GenerateResponse = z.infer<typeof generateResponseSchema>;

@@ -4,15 +4,22 @@ Guidance for coding agents working in this repository. Read this file and `READM
 
 ## Current status
 
-Implementation has **started (Phase 1: scaffold and verification spike)**. The repository contains:
+The **MVP is implemented** (all four phases). Release is pending: no version tag has been pushed. The repository contains:
 
-- A Next.js 16 scaffold with the code standard, tests, and npm scripts described under "Code standard and tests".
-- The operation-filtering module (`src/lib/selection/filter-spec.ts`) and its tests.
-- Representative sample specifications in `samples/specs/`.
-- The pinned generator version in `openapitools.json`.
-- The CI, AI review, and release workflows in `.github/workflows/`.
+- The full flow from specification input to ZIP download:
+  - validation (`src/lib/openapi/`)
+  - operation listing, grouping, and filtering (`src/lib/selection/`)
+  - target configuration (`src/lib/targets/`)
+  - generation (`src/lib/generation/`)
+  - ZIP building (`src/lib/archive/`)
+  - the `/api/validate` and `/api/generate` Route Handlers
+  - the workflow UI (`src/components/workflow/`)
+- Integration guides: deterministic templates in `src/lib/guides/`, rendered in the UI (`src/components/guide/`) and as `INTEGRATION.md` in the ZIP, both from the same generation result.
+- The `typescript-fetch` template override in `generator-templates/`.
+- Sample specifications in `samples/specs/`, and shared test fixtures in `src/test/`.
+- The root `Dockerfile` and `.dockerignore`, and the CI, AI review, and release workflows in `.github/workflows/`.
 
-There is no `Dockerfile` yet, so the release workflow still fails if a tag is pushed. Do not assume any other script, command, folder, or package is present until you have verified it.
+Do not assume any other script, command, folder, or package is present until you have verified it.
 
 This project uses **Next.js 16**, which differs from older versions. Read `AGENTS.md` and the bundled docs in `node_modules/next/dist/docs/` before writing Next.js code. For example, with `cacheComponents` enabled, route files must not export `runtime` (Node.js is the default and only supported runtime).
 
@@ -58,13 +65,24 @@ Verified in the Phase 1 spike with OpenAPI Generator 7.26.0:
 | Target | Generator | Verified against |
 | --- | --- | --- |
 | C#/.NET | `csharp`, library `generichost`, `nullableReferenceTypes=true` | `dotnet build` with .NET 10 (`net10.0`), no warnings |
-| TypeScript for Next.js/React and Nuxt/Vue: HTTP client chosen by the user | `typescript-axios` (default) or `typescript-fetch`, with `supportsES6=true` | `tsc` with Next.js 16 defaults. With Nuxt 4.6 defaults, `typescript-axios` compiles. `typescript-fetch` fails in `runtime.ts` (`noUncheckedIndexedAccess`, `noImplicitOverride`), so it needs a version-pinned template override before Nuxt + fetch can be offered. |
+| TypeScript for Next.js/React and Nuxt/Vue: HTTP client chosen by the user | `typescript-axios` (default; `supportsES6`, `withSeparateModelsAndApi`, `apiPackage=api`, `modelPackage=model`) or `typescript-fetch` (`supportsES6`, plus the `runtime.ts` override in `generator-templates/typescript-fetch/`) | `tsc` with Next.js 16 defaults and with Nuxt 4.6 defaults, for both clients. Without the override, `typescript-fetch` fails Nuxt's `noUncheckedIndexedAccess` and `noImplicitOverride`. When the pinned generator version changes, re-check the override against the new upstream template. |
 | TypeScript for Angular | `typescript-angular` (`ngVersion` default 22.0.0) | `tsc` 6.0 with Angular 22 strict workspace defaults |
 
 Rules for preparing generator input:
 
 - The generator rejects duplicate `operationId`s. ScrAPI rejects such specifications during validation with a clear error.
 - Operations with several tags produce duplicate exports in TypeScript output. The generator's copy of the specification keeps only each operation's **first** tag, and the guide reflects that class placement. The original specification is unchanged.
+
+Supported destination layouts (the paths are set in `src/lib/targets/config.ts`):
+
+| Target | ZIP folder | Project destination |
+| --- | --- | --- |
+| Next.js (App Router, `src/` directory) | `api-client/` | `src/lib/api-client/` |
+| Nuxt 4 (`app/` directory) | `api-client/` | `app/lib/api-client/` |
+| Angular (Angular CLI workspace) | `api-client/` | `src/app/api-client/` |
+| C#/.NET | `ApiClient/` (`ApiClient.csproj`, namespace `ApiClient`) | `src/ApiClient/`, next to the solution |
+
+Only the client source files are kept. Generator scaffolding (READMEs, docs, tests, solution files, CI files, `git_push.sh`, `.openapi-generator/`) is left out.
 
 Do not claim other generators, options, or framework versions without verifying them the same way.
 

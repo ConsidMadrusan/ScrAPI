@@ -27,6 +27,7 @@ export function listOperations(document: JsonObject): OperationSummary[] {
         method,
         path,
         tags: uniqueStrings(operation.tags),
+        requiresInput: requiresInput(document, pathItem, operation),
       };
       if (typeof operation.summary === "string") summary.summary = operation.summary;
       if (typeof operation.operationId === "string") {
@@ -118,6 +119,34 @@ export function resolveSelection(
     .filter((operation) => requested.has(operation.id))
     .map(({ method, path }) => ({ method, path }));
   return { ok: true, keys };
+}
+
+/**
+ * True when calling the operation needs arguments: a required parameter
+ * (path parameters always are) or a required request body.
+ */
+function requiresInput(document: JsonObject, pathItem: JsonObject, operation: JsonObject): boolean {
+  const parameters = [
+    ...(Array.isArray(pathItem.parameters) ? pathItem.parameters : []),
+    ...(Array.isArray(operation.parameters) ? operation.parameters : []),
+  ];
+  const requiredParameter = parameters.some((parameter) => {
+    const resolved = resolveLocal(document, parameter);
+    return isJsonObject(resolved) && (resolved.required === true || resolved.in === "path");
+  });
+  const body = resolveLocal(document, operation.requestBody);
+  return requiredParameter || (isJsonObject(body) && body.required === true);
+}
+
+/** Follows one `#/components/...` reference; other values are returned as they are. */
+function resolveLocal(document: JsonObject, value: JsonObject[string] | undefined) {
+  if (!isJsonObject(value) || typeof value.$ref !== "string") return value;
+  let current: JsonObject[string] | undefined = document;
+  for (const segment of value.$ref.replace(/^#\//, "").split("/")) {
+    const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    current = isJsonObject(current) ? current[key] : undefined;
+  }
+  return current;
 }
 
 function uniqueStrings(value: unknown): string[] {

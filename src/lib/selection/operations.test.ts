@@ -34,10 +34,21 @@ describe("listOperations", () => {
       method: "post",
       path: "/books",
       tags: ["books", "admin"],
+      requiresInput: true,
       summary: "Create a book",
       operationId: "createBook",
     });
     expect(operations[2]).not.toHaveProperty("operationId");
+  });
+
+  it.each([
+    ["GET /books", false], // only optional (referenced) query parameters
+    ["POST /books", true], // referenced required request body
+    ["GET /books/{bookId}", true], // referenced path-level path parameter
+    ["GET /authors/{authorId}", true], // inline path parameter
+    ["GET /health", false],
+  ])("knows whether %s needs arguments", (id, expected) => {
+    expect(operations.find((operation) => operation.id === id)?.requiresInput).toBe(expected);
   });
 
   it("removes repeated tags on one operation", () => {

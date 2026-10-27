@@ -1,28 +1,50 @@
-import { validateResponseSchema, type ValidateResponse } from "@/lib/validation/responses";
+import type { z } from "zod";
+import type { GenerateRequest } from "@/lib/validation/requests";
+import {
+  generateResponseSchema,
+  validateResponseSchema,
+  type FailureResponse,
+  type GenerateResponse,
+  type ValidateResponse,
+} from "@/lib/validation/responses";
 
-const UNEXPECTED: ValidateResponse = {
+const UNEXPECTED: FailureResponse = {
   ok: false,
   errors: [
     {
       code: "unexpected-response",
-      message: "The server could not validate the specification. Try again.",
+      message: "The server sent an unexpected response. Try again.",
     },
   ],
 };
 
 /** Calls the validation endpoint and checks the response shape at runtime. */
-export async function requestValidation(
-  spec: string,
+export function requestValidation(spec: string, signal: AbortSignal): Promise<ValidateResponse> {
+  return postJson("/api/validate", { spec }, validateResponseSchema, signal);
+}
+
+/** Calls the generation endpoint and checks the response shape at runtime. */
+export function requestGeneration(
+  request: GenerateRequest,
   signal: AbortSignal,
-): Promise<ValidateResponse> {
-  const response = await fetch("/api/validate", {
+): Promise<GenerateResponse> {
+  return postJson("/api/generate", request, generateResponseSchema, signal);
+}
+
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  schema: z.ZodType<T>,
+  signal: AbortSignal,
+): Promise<T | FailureResponse> {
+  const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ spec }),
+    body: JSON.stringify(body),
     signal,
   });
   try {
-    const parsed = validateResponseSchema.safeParse(await response.json());
+    const parsed = schema.safeParse(await response.json());
     return parsed.success ? parsed.data : UNEXPECTED;
   } catch {
     return UNEXPECTED;
