@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readJsonBody } from "./read-request";
 
 const encoder = new TextEncoder();
@@ -28,13 +28,13 @@ describe("readJsonBody", () => {
       method: "POST",
       body: JSON.stringify({ a: 1 }),
     });
-    await expect(readJsonBody(request, 100)).resolves.toEqual({ ok: true, value: { a: 1 } });
+    await expect(readJsonBody(request, 100, 1000)).resolves.toEqual({ ok: true, value: { a: 1 } });
   });
 
   it("parses a chunked body without Content-Length", async () => {
     const request = chunkedRequest(['{"a":', '"é"}']);
     expect(request.headers.get("content-length")).toBeNull();
-    await expect(readJsonBody(request, 100)).resolves.toEqual({ ok: true, value: { a: "é" } });
+    await expect(readJsonBody(request, 100, 1000)).resolves.toEqual({ ok: true, value: { a: "é" } });
   });
 
   it("rejects a declared Content-Length over the limit without reading", async () => {
@@ -43,7 +43,7 @@ describe("readJsonBody", () => {
       headers: { "content-length": "1000" },
       body: "{}",
     });
-    const result = await readJsonBody(request, 10);
+    const result = await readJsonBody(request, 10, 1000);
     expect(result).toMatchObject({ ok: false, status: 413 });
   });
 
@@ -54,7 +54,7 @@ describe("readJsonBody", () => {
       pulls += 1;
     });
 
-    const result = await readJsonBody(request, 25);
+    const result = await readJsonBody(request, 25, 1000);
 
     expect(result).toMatchObject({ ok: false, status: 413, problem: { code: "too-large" } });
     expect(pulls).toBeLessThan(10);
@@ -62,9 +62,47 @@ describe("readJsonBody", () => {
 
   it("rejects a body that is not JSON", async () => {
     const request = chunkedRequest(["not json"]);
-    await expect(readJsonBody(request, 100)).resolves.toMatchObject({
+    await expect(readJsonBody(request, 100, 1000)).resolves.toMatchObject({
       ok: false,
       status: 400,
+    });
+  });
+
+  describe("with a slow body", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("answers 408 and cancels the stream when the body does not arrive in time", async () => {
+      vi.useFakeTimers();
+      let sent = false;
+      let cancelled = false;
+      // Sends the first chunk, then never sends the rest.
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (!sent) controller.enqueue(encoder.encode('{"a":'));
+          sent = true;
+          return new Promise<void>(() => undefined);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const request = new Request("http://localhost/api/validate", {
+        method: "POST",
+        body,
+        duplex: "half",
+      } as RequestInit);
+
+      const pending = readJsonBody(request, 100, 1000);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        status: 408,
+        problem: { code: "request-timeout" },
+      });
+      expect(cancelled).toBe(true);
     });
   });
 });

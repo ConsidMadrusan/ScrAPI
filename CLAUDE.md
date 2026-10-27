@@ -159,7 +159,7 @@ The code standard is enforced by tooling. Run `npm run check` (lint, typecheck, 
   - No `any`, no non-null assertions (`!`), and type-only imports via `import type`.
   - No floating or misused promises, and exhaustive `switch` statements.
   - `no-console` everywhere, except `console.warn` and `console.error` in `src/lib/**` and `src/app/api/**`. Never log content.
-  - `src/components/**` and `src/app/**/page.tsx` must not import filesystem or child-process modules, `@/lib/generation`, or `@/lib/openapi/validate`.
+  - `src/components/**`, `src/app/**/page.tsx`, and the `src/lib/` folders that client code imports (`archive`, `guides`, `openapi` except `validate.ts`, `selection`, `targets`, `validation`, and `utils.ts`) must not import filesystem or child-process modules, `@/lib/generation`, or `@/lib/openapi/validate`.
 - **TypeScript:** `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`.
 - **Tests:**
   - Tests live next to the code they cover as `*.test.ts` or `*.test.tsx`.

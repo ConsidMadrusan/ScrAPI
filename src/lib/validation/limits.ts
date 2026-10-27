@@ -4,6 +4,14 @@ export const MAX_SPEC_BYTES = 5 * 1024 * 1024;
 /** Largest accepted request body: the specification plus options and selection. */
 export const MAX_REQUEST_BYTES = MAX_SPEC_BYTES + 512 * 1024;
 
+/**
+ * Longest time a request body may take to arrive, in milliseconds. Routes
+ * read the body while holding a concurrency slot, so this bounds how long a
+ * slowly sending client can keep a slot. It allows a body of
+ * MAX_REQUEST_BYTES at roughly 200 KB/s.
+ */
+export const MAX_BODY_READ_MS = 30_000;
+
 /** Most operations a single generation request may select. */
 export const MAX_SELECTED_OPERATIONS = 5000;
 
