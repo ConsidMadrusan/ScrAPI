@@ -102,6 +102,36 @@ describe("runGenerator", () => {
     expect(outcome).toEqual({ status: "timeout" });
   });
 
+  it("kills the process with SIGKILL when its output grows past the limit", async () => {
+    const child = fakeProcess();
+    let checks = 0;
+    const exceedsOutputLimit = vi.fn(() => {
+      checks += 1;
+      return Promise.resolve(checks >= 2);
+    });
+
+    const outcome = await runGenerator({ ...run, exceedsOutputLimit, outputCheckIntervalMs: 1 });
+
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(outcome).toEqual({ status: "output-too-large" });
+  });
+
+  it("keeps running when an output check fails, and stops checking after exit", async () => {
+    const child = fakeProcess();
+    const exceedsOutputLimit = vi.fn(() => Promise.reject(new Error("EACCES")));
+    const outcome = runGenerator({ ...run, exceedsOutputLimit, outputCheckIntervalMs: 1 });
+    await vi.waitFor(() => {
+      expect(exceedsOutputLimit.mock.calls.length).toBeGreaterThan(1);
+    });
+    child.emit("close", 0);
+
+    expect(await outcome).toEqual({ status: "ok" });
+    expect(child.kill).not.toHaveBeenCalled();
+    const callsAtExit = exceedsOutputLimit.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(exceedsOutputLimit.mock.calls.length).toBe(callsAtExit);
+  });
+
   it("kills the process when the signal aborts", async () => {
     const child = fakeProcess();
     const controller = new AbortController();

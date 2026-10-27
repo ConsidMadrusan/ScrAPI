@@ -11,6 +11,7 @@ export type SpecErrorCode =
   | "external-ref"
   | "unsupported-ref"
   | "unresolved-ref"
+  | "too-many-references"
   | "invalid-spec"
   | "duplicate-operation-id"
   | "no-operations";

@@ -1,5 +1,6 @@
 import { formatMegabytes, MAX_SPEC_BYTES, utf8ByteLength } from "@/lib/validation/limits";
 import { formatLocation, type SpecError, type SpecResult } from "./errors";
+import { exceedsExpansionBudget } from "./expansion";
 import { isJsonObject, type JsonObject, type JsonValue } from "./json";
 import { resolveRef } from "./pointer";
 
@@ -15,8 +16,10 @@ export const MAX_NESTING_DEPTH = 128;
 
 /**
  * Checks everything that does not need the full OpenAPI validator: size, JSON
- * syntax, the OpenAPI version, and that every reference is internal and
- * resolves. Runs in the browser for fast feedback and on the server.
+ * syntax, the OpenAPI version, that every reference is internal and
+ * resolves, and that the references do not expand beyond what the validator
+ * can process in reasonable time. Runs in the browser for fast feedback and
+ * on the server.
  */
 export function parseSpecification(text: string): SpecResult<JsonObject> {
   const content = text.replace(/^﻿/, "").trim();
@@ -55,6 +58,15 @@ export function parseSpecification(text: string): SpecResult<JsonObject> {
 
   const referenceErrors = checkReferences(document);
   if (referenceErrors.length > 0) return { ok: false, errors: referenceErrors };
+
+  // Needs resolvable internal references, so it runs after checkReferences.
+  if (exceedsExpansionBudget(document)) {
+    return fail({
+      code: "too-many-references",
+      message:
+        "The specification's schemas reference each other so often that resolving the references makes it too large to process. Reduce the number of nested references.",
+    });
+  }
 
   return { ok: true, value: document };
 }

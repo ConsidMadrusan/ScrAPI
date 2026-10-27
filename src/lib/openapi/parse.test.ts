@@ -160,4 +160,19 @@ describe("parseSpecification", () => {
     const nested = `${"[".repeat(depth)}${"]".repeat(depth)}`;
     expect(parseSpecification(`{"openapi":"3.0.3","x":${nested}}`).ok).toBe(true);
   });
+
+  it("rejects references that expand exponentially before the validator sees them", () => {
+    const schemas: JsonObject = {};
+    const count = 40;
+    for (let index = 0; index < count; index += 1) {
+      const ref = `#/components/schemas/S${String(index + 1)}`;
+      schemas[`S${String(index)}`] =
+        index === count - 1
+          ? { type: "string" }
+          : { type: "object", properties: { a: { $ref: ref }, b: { $ref: ref } } };
+    }
+    expect(errorCodes(parseSpecification(spec({ components: { schemas } })))).toEqual([
+      "too-many-references",
+    ]);
+  });
 });

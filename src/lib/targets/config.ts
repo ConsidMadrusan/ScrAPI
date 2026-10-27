@@ -30,6 +30,19 @@ export const GLOBAL_PROPERTIES = "apiTests=false,modelTests=false,apiDocs=false,
  */
 export const ANGULAR_APP_DIR = "src/app";
 
+/**
+ * Source folder of the supported Next.js and Nuxt layouts. The client folder
+ * goes inside it, and the framework's import alias (`@/` and `~/`) points to
+ * it, so the guide builds its import paths from the same value.
+ */
+export const TYPESCRIPT_SOURCE_DIRS = {
+  "typescript-next": "src",
+  "typescript-nuxt": "app",
+} as const satisfies Record<"typescript-next" | "typescript-nuxt", string>;
+
+/** Client folder inside a TypeScript framework's source folder. */
+const TYPESCRIPT_CLIENT_DIR = "lib/api-client";
+
 /** Target framework of the generated C# project; the user's project must match it. */
 export const DOTNET_TARGET_FRAMEWORK = "net10.0";
 
@@ -40,9 +53,11 @@ const CSHARP_PROJECT = "ApiClient";
 export function resolveTarget(options: GenerationOptions): TargetConfig {
   switch (options.target) {
     case "typescript-next":
-      return typescriptTarget(options.httpClient, "src/lib/api-client");
     case "typescript-nuxt":
-      return typescriptTarget(options.httpClient, "app/lib/api-client");
+      return typescriptTarget(
+        options.httpClient,
+        `${TYPESCRIPT_SOURCE_DIRS[options.target]}/${TYPESCRIPT_CLIENT_DIR}`,
+      );
     case "typescript-angular":
       return {
         generator: {

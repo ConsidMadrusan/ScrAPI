@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { resolveTarget, type TargetConfig } from "@/lib/targets/config";
 import type { Problem } from "@/lib/validation/problems";
 import type { GeneratedFile, GenerateSuccess } from "@/lib/validation/responses";
-import { collectOutput, OutputLimitError } from "./collect-output";
+import { collectOutput, exceedsGeneratorOutputLimits, OutputLimitError } from "./collect-output";
 import { keepFirstTagOnly } from "./generator-input";
 import { runGenerator, type GeneratorOutcome } from "./java-generator";
 import type { PreparedGeneration } from "./prepare";
@@ -65,6 +65,7 @@ async function runAndCollect(
     settings: target.generator,
     specPath,
     outputDir,
+    exceedsOutputLimit: () => exceedsGeneratorOutputLimits(outputDir),
     ...(signal === undefined ? {} : { signal }),
   });
   if (outcome.status !== "ok") {
@@ -81,13 +82,7 @@ async function runAndCollect(
   try {
     files = await collectOutput(outputDir, target);
   } catch (error) {
-    if (error instanceof OutputLimitError) {
-      return failure(
-        422,
-        "output-too-large",
-        "The generated code is too large. Select fewer operations and try again.",
-      );
-    }
+    if (error instanceof OutputLimitError) return outputTooLarge();
     throw error;
   }
   if (files.length === 0) {
@@ -125,6 +120,8 @@ function generatorFailure(
         "generation-timeout",
         "Generation took too long and was stopped. Select fewer operations and try again.",
       );
+    case "output-too-large":
+      return outputTooLarge();
     case "aborted":
       return failure(499, "generation-cancelled", "Generation was cancelled.");
     case "failed":
@@ -137,6 +134,10 @@ function generatorFailure(
       console.error("Code generator is not available", { reason: outcome.reason });
       return failure(503, "generator-unavailable", "Code generation is not available on this server right now.");
   }
+}
+
+function outputTooLarge(): Extract<GenerateResult, { ok: false }> {
+  return failure(422, "output-too-large", "The generated code is too large. Select fewer operations and try again.");
 }
 
 function failure(status: number, code: string, message: string): Extract<GenerateResult, { ok: false }> {

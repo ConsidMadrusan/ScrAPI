@@ -33,12 +33,22 @@ export interface GeneratorRun {
   timeoutMs?: number;
   /** Aborts the run, e.g. when the client disconnects. The process is killed. */
   signal?: AbortSignal;
+  /**
+   * Polled while the generator runs. When it resolves to true, the process is
+   * killed, so oversized output stops growing before the run would end.
+   */
+  exceedsOutputLimit?: () => Promise<boolean>;
+  outputCheckIntervalMs?: number;
 }
+
+/** How often `exceedsOutputLimit` is polled by default. */
+export const OUTPUT_CHECK_INTERVAL_MS = 250;
 
 export type GeneratorOutcome =
   | { status: "ok" }
   | { status: "failed"; exitCode: number | null }
   | { status: "timeout" }
+  | { status: "output-too-large" }
   | { status: "aborted" }
   | { status: "unavailable"; reason: "missing-jar" | "missing-java" };
 
@@ -103,8 +113,37 @@ export async function runGenerator(run: GeneratorRun): Promise<GeneratorOutcome>
       child.kill("SIGKILL");
     };
     run.signal?.addEventListener("abort", onAbort, { once: true });
+
+    let finished = false;
+    let outputTooLarge = false;
+    let checking = false;
+    const { exceedsOutputLimit } = run;
+    const outputCheck =
+      exceedsOutputLimit === undefined
+        ? undefined
+        : setInterval(() => {
+            if (checking) return;
+            checking = true;
+            exceedsOutputLimit().then(
+              (exceeded) => {
+                checking = false;
+                if (exceeded && !finished) {
+                  outputTooLarge = true;
+                  child.kill("SIGKILL");
+                }
+              },
+              () => {
+                // A failed check is retried on the next tick; the final
+                // output is checked again when it is collected.
+                checking = false;
+              },
+            );
+          }, run.outputCheckIntervalMs ?? OUTPUT_CHECK_INTERVAL_MS);
+
     const cleanUp = () => {
+      finished = true;
       clearTimeout(timer);
+      clearInterval(outputCheck);
       run.signal?.removeEventListener("abort", onAbort);
     };
 
@@ -120,6 +159,7 @@ export async function runGenerator(run: GeneratorRun): Promise<GeneratorOutcome>
       cleanUp();
       if (aborted) resolve({ status: "aborted" });
       else if (timedOut) resolve({ status: "timeout" });
+      else if (outputTooLarge) resolve({ status: "output-too-large" });
       else if (exitCode === 0) resolve({ status: "ok" });
       else resolve({ status: "failed", exitCode });
     });

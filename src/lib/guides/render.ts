@@ -1,4 +1,4 @@
-import { ANGULAR_APP_DIR, DOTNET_TARGET_FRAMEWORK } from "@/lib/targets/config";
+import { ANGULAR_APP_DIR, DOTNET_TARGET_FRAMEWORK, TYPESCRIPT_SOURCE_DIRS } from "@/lib/targets/config";
 import type { GenerateSuccess } from "@/lib/validation/responses";
 import type { Guide, GuideBlock, GuideStep } from "./types";
 import { findUsageExample, pascalCase, type UsageExample } from "./usage";
@@ -36,8 +36,8 @@ const FRAMEWORKS = {
       "A Next.js 16 project with the App Router and TypeScript, using the `src/` directory.",
       "The default `@/*` import alias that points to `src/*` (created by `create-next-app`).",
     ],
-    /** The `@/*` alias resolves `src/*`. */
-    alias: { prefix: "@/", root: "src" },
+    /** The `@/*` alias resolves the source folder that holds the client folder. */
+    alias: { prefix: "@/", root: TYPESCRIPT_SOURCE_DIRS["typescript-next"] },
     verify: ["npx tsc --noEmit", "npm run build"],
     aliasError: (importPath: string) =>
       `Cannot find module '${importPath}': the \`@/*\` alias is missing. Add \`"paths": { "@/*": ["./src/*"] }\` to \`compilerOptions\` in \`tsconfig.json\`, or import with a relative path.`,
@@ -48,8 +48,8 @@ const FRAMEWORKS = {
       "A Nuxt 4 project with the default `app/` source directory.",
       "The default `~` alias, which points to `app/`.",
     ],
-    /** The `~` alias resolves `app/`. */
-    alias: { prefix: "~/", root: "app" },
+    /** The `~` alias resolves the source folder that holds the client folder. */
+    alias: { prefix: "~/", root: TYPESCRIPT_SOURCE_DIRS["typescript-nuxt"] },
     verify: ["npm install --save-dev vue-tsc typescript@^6", "npx nuxi typecheck", "npm run build"],
     aliasError: (importPath: string, destinationRoot: string) =>
       `Cannot find module '${importPath}': check that the files are in \`${destinationRoot}/\` (Nuxt 4 uses \`app/\` as its source directory).`,

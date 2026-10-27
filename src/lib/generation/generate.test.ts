@@ -3,6 +3,7 @@ import type * as FsPromises from "node:fs/promises";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_GENERATOR_OUTPUT_BYTES } from "./collect-output";
 import type { GeneratorOutcome, GeneratorRun } from "./java-generator";
 import type { PreparedGeneration } from "./prepare";
 
@@ -99,6 +100,7 @@ describe("generateClient", () => {
   it.each([
     [{ status: "failed", exitCode: 1 }, 422, "generation-failed"],
     [{ status: "timeout" }, 422, "generation-timeout"],
+    [{ status: "output-too-large" }, 422, "output-too-large"],
     [{ status: "unavailable", reason: "missing-jar" }, 503, "generator-unavailable"],
   ] as const)("maps %j to a user-facing error and cleans up", async (outcome, status, code) => {
     generatorThat(async (run) => {
@@ -123,6 +125,21 @@ describe("generateClient", () => {
     const result = await generateClient(prepared, controller.signal);
     expect(result).toMatchObject({ ok: false, status: 499 });
     expect(existsSync(workDir())).toBe(false);
+  });
+
+  it("gives the generator a check of the output folder against the generator output limits", async () => {
+    let checks: boolean[] = [];
+    generatorThat(async (run) => {
+      if (!run.exceedsOutputLimit) throw new Error("no output check");
+      const beforeOutput = await run.exceedsOutputLimit();
+      await mkdir(run.outputDir, { recursive: true });
+      await writeFile(join(run.outputDir, "big.ts"), "x".repeat(MAX_GENERATOR_OUTPUT_BYTES + 1));
+      checks = [beforeOutput, await run.exceedsOutputLimit()];
+      return { status: "output-too-large" };
+    });
+
+    await generateClient(prepared);
+    expect(checks).toEqual([false, true]);
   });
 
   it("cleans up when collecting the output throws", async () => {
