@@ -90,7 +90,7 @@ jobs:
             --json-schema '{"type":"object","properties":{"review":{"type":"string"}},"required":["review"],"additionalProperties":false}'
 
       - name: Post or update review comment
-        if: steps.claude.outputs.structured_output != ''
+        if: steps.claude.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -98,8 +98,16 @@ jobs:
           REVIEW: ${{ matrix.review }}
           TITLE: ${{ matrix.title }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEW_TEXT: ${{ fromJSON(steps.claude.outputs.structured_output).review }}
+          # Parsed with jq below: fromJSON() in an expression fails the whole
+          # workflow template when the output is empty.
+          STRUCTURED_OUTPUT: ${{ steps.claude.outputs.structured_output }}
         run: |
+          REVIEW_TEXT="$(printf '%s' "${STRUCTURED_OUTPUT}" | jq -r '.review // empty' 2>/dev/null || true)"
+          if [ -z "${REVIEW_TEXT}" ]; then
+            echo "::error::Claude returned no review text for ${REVIEW}; no comment was posted."
+            exit 1
+          fi
+
           marker="<!-- ai-review:${REVIEW} -->"
           body_file="${RUNNER_TEMP}/ai-review-comment.md"
           {
