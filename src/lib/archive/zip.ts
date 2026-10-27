@@ -1,3 +1,5 @@
+import "server-only";
+
 import JSZip from "jszip";
 import { isSafeArchivePath } from "./safe-path";
 

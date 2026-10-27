@@ -25,9 +25,14 @@ interface Reply {
   status?: number;
 }
 
-/** Answers /api/validate and /api/generate with fixed replies and records requests. */
+/** Answers /api/validate, /api/generate, and /api/archive with fixed replies and records requests. */
 function mockFetch(validate: Reply["body"], validateStatus = 200, generate?: Reply) {
   const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url) => {
+    if (url === "/api/archive") {
+      return Promise.resolve(
+        new Response(new Uint8Array([0x50, 0x4b]), { headers: { "content-type": "application/zip" } }),
+      );
+    }
     const reply: Reply =
       url === "/api/generate" && generate ? generate : { body: validate, status: validateStatus };
     return Promise.resolve(Response.json(reply.body, { status: reply.status ?? 200 }));
@@ -212,11 +217,11 @@ describe("Workflow", () => {
       expect(screen.queryByRole("button", { name: "Download ZIP" })).not.toBeInTheDocument();
     });
 
-    it("downloads a ZIP built from the shown result", async () => {
+    it("downloads a ZIP the server built from the shown result", async () => {
       const createObjectURL = vi.fn<(blob: Blob) => string>(() => "blob:scrapi");
       vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
       const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-      const { user } = await validatedWorkflow({ body: generated });
+      const { fetchMock, user } = await validatedWorkflow({ body: generated });
       await user.click(screen.getByRole("checkbox", { name: "GET /todos – List todos" }));
       await user.click(screen.getByRole("button", { name: "Generate code" }));
 
@@ -225,9 +230,25 @@ describe("Workflow", () => {
       await vi.waitFor(() => {
         expect(click).toHaveBeenCalledOnce();
       });
+      const archiveCall = fetchMock.mock.calls.find(([url]) => url === "/api/archive");
+      const sentBody = archiveCall?.[1]?.body;
+      expect(typeof sentBody === "string" ? JSON.parse(sentBody) : undefined).toEqual(generated);
       const blob = createObjectURL.mock.calls[0]?.[0];
       expect(blob?.type).toBe("application/zip");
       expect(click.mock.contexts[0]).toHaveProperty("download", "api-client.zip");
+    });
+
+    it("shows an error when the server cannot build the ZIP", async () => {
+      const { fetchMock, user } = await validatedWorkflow({ body: generated });
+      await user.click(screen.getByRole("checkbox", { name: "GET /todos – List todos" }));
+      await user.click(screen.getByRole("button", { name: "Generate code" }));
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve(Response.json({ ok: false, errors: [{ code: "internal", message: "x" }] }, { status: 500 })),
+      );
+
+      await user.click(await screen.findByRole("button", { name: "Download ZIP" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("The ZIP file could not be created.");
     });
 
     it("shows generation problems", async () => {

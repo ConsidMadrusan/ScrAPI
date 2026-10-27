@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_SPEC_BYTES } from "@/lib/validation/limits";
+import { MAX_SPEC_BYTES, MAX_SPEC_DEPTH } from "@/lib/validation/limits";
 import type { SpecResult } from "./errors";
 import type { JsonObject } from "./json";
 import { parseSpecification } from "./parse";
@@ -30,6 +30,21 @@ describe("parseSpecification", () => {
   it("rejects input over the size limit", () => {
     const text = `{"x":"${"a".repeat(MAX_SPEC_BYTES)}"}`;
     expect(errorCodes(parseSpecification(text))).toEqual(["too-large"]);
+  });
+
+  it("rejects deeply nested documents without overflowing the stack", () => {
+    const depth = 200_000;
+    const text = spec().replace(/}$/, `,"x":${"[".repeat(depth)}${"]".repeat(depth)}}`);
+    expect(errorCodes(parseSpecification(text))).toEqual(["too-deep"]);
+  });
+
+  it("accepts nesting up to the depth limit", () => {
+    // The document object is level 1 and the "x" array is level 2.
+    const arrays = MAX_SPEC_DEPTH - 1;
+    const text = spec().replace(/}$/, `,"x":${"[".repeat(arrays)}${"]".repeat(arrays)}}`);
+    expect(parseSpecification(text).ok).toBe(true);
+    const tooDeep = spec().replace(/}$/, `,"x":${"[".repeat(arrays + 1)}${"]".repeat(arrays + 1)}}`);
+    expect(errorCodes(parseSpecification(tooDeep))).toEqual(["too-deep"]);
   });
 
   it.each([

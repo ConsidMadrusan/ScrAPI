@@ -5,6 +5,7 @@ import {
   validateResponseSchema,
   type FailureResponse,
   type GenerateResponse,
+  type GenerateSuccess,
   type ValidateResponse,
 } from "@/lib/validation/responses";
 
@@ -29,6 +30,21 @@ export function requestGeneration(
   signal: AbortSignal,
 ): Promise<GenerateResponse> {
   return postJson("/api/generate", request, generateResponseSchema, signal);
+}
+
+/**
+ * Asks the server to build the ZIP for a generation result. Returns the ZIP,
+ * or undefined when the server did not send one.
+ */
+export async function requestArchive(result: GenerateSuccess): Promise<Blob | undefined> {
+  const response = await fetch("/api/archive", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(result),
+  });
+  if (!response.ok || response.headers.get("content-type") !== "application/zip") return undefined;
+  const bytes = await response.arrayBuffer();
+  return new Blob([bytes], { type: "application/zip" });
 }
 
 async function postJson<T>(

@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveTarget } from "@/lib/targets/config";
-import { collectOutput, MAX_OUTPUT_BYTES, OutputLimitError } from "./collect-output";
+import {
+  collectOutput,
+  exceedsRawOutputLimits,
+  MAX_OUTPUT_BYTES,
+  MAX_RAW_OUTPUT_BYTES,
+  MAX_RAW_OUTPUT_ENTRIES,
+  OutputLimitError,
+} from "./collect-output";
 
 let outputDir = "";
 
@@ -75,5 +82,36 @@ describe("collectOutput", () => {
   it("stops when the output is larger than the limit", async () => {
     await writeOutput("big.ts", "x".repeat(MAX_OUTPUT_BYTES + 1));
     await expect(collectOutput(outputDir, typescript)).rejects.toBeInstanceOf(OutputLimitError);
+  });
+});
+
+describe("exceedsRawOutputLimits", () => {
+  it("accepts small output and a folder that does not exist yet", async () => {
+    await writeOutput("apis/TodosApi.ts", "api");
+    expect(await exceedsRawOutputLimits(outputDir)).toBe(false);
+    expect(await exceedsRawOutputLimits(join(outputDir, "missing"))).toBe(false);
+  });
+
+  it("counts every file on disk, including ones the target drops", async () => {
+    await writeOutput("docs/README.md", "x".repeat(MAX_RAW_OUTPUT_BYTES + 1));
+    expect(await exceedsRawOutputLimits(outputDir)).toBe(true);
+  });
+
+  it("rejects too many entries", async () => {
+    await Promise.all(
+      Array.from({ length: MAX_RAW_OUTPUT_ENTRIES + 1 }, (_, index) => writeOutput(`m/M${String(index)}.ts`)),
+    );
+    expect(await exceedsRawOutputLimits(outputDir)).toBe(true);
+  });
+
+  it("does not follow symbolic links", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "scrapi-outside-"));
+    try {
+      await writeFile(join(outside, "big.ts"), "x".repeat(MAX_RAW_OUTPUT_BYTES + 1));
+      await symlink(outside, join(outputDir, "linked"));
+      expect(await exceedsRawOutputLimits(outputDir)).toBe(false);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

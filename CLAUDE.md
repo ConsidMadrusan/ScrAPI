@@ -12,7 +12,7 @@ The **MVP is implemented** (all four phases). Release is pending: no version tag
   - target configuration (`src/lib/targets/`)
   - generation (`src/lib/generation/`)
   - ZIP building (`src/lib/archive/`)
-  - the `/api/validate` and `/api/generate` Route Handlers
+  - the `/api/validate`, `/api/generate`, and `/api/archive` (ZIP response built on the server from the generation result) Route Handlers
   - the workflow UI (`src/components/workflow/`)
 - Integration guides: deterministic templates in `src/lib/guides/`, rendered in the UI (`src/components/guide/`) and as `INTEGRATION.md` in the ZIP, both from the same generation result.
 - The `typescript-fetch` template override in `generator-templates/`.

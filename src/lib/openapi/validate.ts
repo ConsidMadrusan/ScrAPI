@@ -12,6 +12,11 @@ import { parseSpecification } from "./parse";
 
 const MAX_VALIDATION_ERRORS = 20;
 
+/** Most specifications that may be validated at once; further requests are rejected as busy. */
+export const MAX_CONCURRENT_VALIDATIONS = 4;
+
+let runningValidations = 0;
+
 export interface ValidatedSpec {
   /** The parsed document, unchanged. */
   document: JsonObject;
@@ -29,11 +34,33 @@ interface SchemaErrorDetail {
 
 /**
  * Authoritative validation: the quick checks from `parseSpecification`, then
- * the OpenAPI 3.0 validator, then rules the generator enforces.
+ * the OpenAPI 3.0 validator, then rules the generator enforces. At most
+ * MAX_CONCURRENT_VALIDATIONS run at once, so parallel large specifications
+ * cannot pile up on the server.
  */
 export async function validateSpecification(
   text: string,
 ): Promise<SpecResult<ValidatedSpec>> {
+  if (runningValidations >= MAX_CONCURRENT_VALIDATIONS) {
+    return {
+      ok: false,
+      errors: [
+        {
+          code: "validator-busy",
+          message: "The server is busy validating other specifications. Try again in a moment.",
+        },
+      ],
+    };
+  }
+  runningValidations += 1;
+  try {
+    return await validate(text);
+  } finally {
+    runningValidations -= 1;
+  }
+}
+
+async function validate(text: string): Promise<SpecResult<ValidatedSpec>> {
   const parsed = parseSpecification(text);
   if (!parsed.ok) return parsed;
   const document = parsed.value;
