@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isSafeArchivePath } from "@/lib/archive/safe-path";
 import type { GenerationOptions } from "@/lib/validation/requests";
-import { resolveTarget, toArchivePath, toDestinationPath } from "./config";
+import { resolveTarget, toArchivePath, toDestinationPath, TYPESCRIPT_SOURCE_DIRS } from "./config";
 
 const ALL_OPTIONS: GenerationOptions[] = [
   { target: "typescript-next", httpClient: "axios" },
@@ -38,6 +38,14 @@ describe("resolveTarget", () => {
     expect(next.generator).toEqual(nuxt.generator);
     expect(next.destinationRoot).not.toBe(nuxt.destinationRoot);
   });
+
+  it.each(["typescript-next", "typescript-nuxt"] as const)(
+    "places the %s client inside the source folder its import alias points to",
+    (target) => {
+      const { destinationRoot } = resolveTarget({ target, httpClient: "axios" });
+      expect(destinationRoot.startsWith(`${TYPESCRIPT_SOURCE_DIRS[target]}/`)).toBe(true);
+    },
+  );
 });
 
 describe("toArchivePath and toDestinationPath", () => {

@@ -186,7 +186,7 @@ Then open http://localhost:3000.
 
 - `--init` forwards shutdown signals to the server, so `docker stop` ends it immediately.
 - `--read-only --tmpfs /tmp`: ScrAPI writes only per-request temporary folders under `/tmp`, and removes them after each generation.
-- `--memory 512m`: a container that generated every target from the sample specifications peaked at about 230 MB, including the JVM. Leave more headroom for large specifications.
+- `--memory 512m`: a container that generated every target from the sample specifications peaked at about 230 MB, including the JVM. Leave more headroom for large specifications. The server handles at most two generation requests and four validation requests at once, and answers further requests with `503` before reading them, until one finishes. A request body that has not fully arrived within 30 seconds is rejected with `408`, so a slow client cannot hold a slot for long. ScrAPI has no per-client rate limit; if the server is reachable by untrusted clients, put a reverse proxy with per-IP rate limiting in front of it. A generator process is stopped when its client disconnects.
 - The container needs no outbound network access. The generator is part of the image and nothing is downloaded at runtime.
 
 | Environment variable | Default in the image | Purpose |

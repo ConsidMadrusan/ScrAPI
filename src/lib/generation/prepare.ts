@@ -45,17 +45,10 @@ export async function prepareGeneration(request: GenerateRequest): Promise<Prepa
   }
 
   try {
-    const filteredSpec = filterSpec(document, selection.keys);
-    const selectedIds = new Set(selection.keys.map(({ method, path }) => `${method} ${path}`));
+    const filteredSpec = filterSpec(document, selection.selected);
     return {
       ok: true,
-      value: {
-        options: request.options,
-        selected: operations.filter((operation) =>
-          selectedIds.has(`${operation.method} ${operation.path}`),
-        ),
-        filteredSpec,
-      },
+      value: { options: request.options, selected: selection.selected, filteredSpec },
     };
   } catch (error) {
     if (error instanceof SpecFilterError) {

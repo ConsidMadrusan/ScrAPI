@@ -1,7 +1,9 @@
 import { isJsonObject, type JsonObject, type JsonValue } from "@/lib/openapi/json";
+import { escapeSegment, resolveRef, unescapeSegment } from "@/lib/openapi/pointer";
 import {
   formatOperationKey,
   HTTP_METHODS,
+  type HttpMethod,
   type OperationKey,
 } from "@/lib/validation/operation";
 
@@ -34,11 +36,16 @@ export function filterSpec(
   const components = isJsonObject(spec.components) ? spec.components : {};
 
   const securityRefs = securitySchemeNames(spec.security, keptOperations).map(
-    (name) => `#/components/securitySchemes/${escapePointer(name)}`,
+    (name) => `#/components/securitySchemes/${escapeSegment(name)}`,
   );
-  const kept = collectComponents(components, keptPaths, securityRefs);
+  const kept = collectComponents(spec, keptPaths, securityRefs);
 
   const result: JsonObject = { ...spec, paths: keptPaths };
+  // Root security only applies to operations without their own. When no kept
+  // operation inherits it, its schemes were not kept, so drop it as well.
+  if (!keptOperations.some((operation) => operation.security === undefined)) {
+    delete result.security;
+  }
   const keptComponentsObject = pickComponents(components, kept);
   if (keptComponentsObject === undefined) {
     delete result.components;
@@ -71,12 +78,12 @@ function selectOperations(
     const keptItem: JsonObject = {};
     let hasOperation = false;
     for (const [field, value] of Object.entries(pathItem)) {
-      if (!HTTP_METHOD_SET.has(field)) {
+      if (!isHttpMethod(field)) {
         // Path-level fields such as shared parameters apply to kept methods.
         keptItem[field] = value;
         continue;
       }
-      const key = `${field.toUpperCase()} ${path}`;
+      const key = formatOperationKey({ method: field, path });
       if (wanted.has(key)) {
         keptItem[field] = value;
         found.add(key);
@@ -101,6 +108,10 @@ function selectOperations(
     );
   }
   return keptPaths;
+}
+
+function isHttpMethod(field: string): field is HttpMethod {
+  return HTTP_METHOD_SET.has(field);
 }
 
 function listOperationObjects(paths: JsonObject): JsonObject[] {
@@ -150,7 +161,7 @@ function securitySchemeNames(
  * visited once.
  */
 function collectComponents(
-  components: JsonObject,
+  spec: JsonObject,
   root: JsonValue,
   extraRefs: readonly string[],
 ): KeptComponents {
@@ -166,13 +177,12 @@ function collectComponents(
         `Unsupported reference "${ref}". Only "#/components/..." references can be used.`,
       );
     }
-    const name = unescapePointer(encodedName);
-    const sectionObject = components[section];
-    const target = isJsonObject(sectionObject) ? sectionObject[name] : undefined;
-    if (target === undefined) {
+    const target = resolveRef(spec, `#/components/${section}/${encodedName}`);
+    if (target === undefined || resolveRef(spec, ref) === undefined) {
       throw new SpecFilterError(`Reference "${ref}" does not resolve.`);
     }
 
+    const name = unescapeSegment(encodedName);
     const names = kept.get(section) ?? new Set<string>();
     kept.set(section, names);
     if (!names.has(name)) {
@@ -220,7 +230,7 @@ function visitDiscriminatorMapping(
     visitRef(
       target.startsWith("#/")
         ? target
-        : `#/components/schemas/${escapePointer(target)}`,
+        : `#/components/schemas/${escapeSegment(target)}`,
     );
   }
 }
@@ -260,12 +270,4 @@ function pickTags(
     (tag) => isJsonObject(tag) && typeof tag.name === "string" && used.has(tag.name),
   );
   return kept.length > 0 ? kept : undefined;
-}
-
-function escapePointer(segment: string): string {
-  return segment.replaceAll("~", "~0").replaceAll("/", "~1");
-}
-
-function unescapePointer(segment: string): string {
-  return segment.replaceAll("~1", "/").replaceAll("~0", "~");
 }

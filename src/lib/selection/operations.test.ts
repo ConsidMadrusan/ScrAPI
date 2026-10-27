@@ -51,6 +51,25 @@ describe("listOperations", () => {
     expect(operations.find((operation) => operation.id === id)?.requiresInput).toBe(expected);
   });
 
+  it("does not follow external or inherited references when checking for arguments", () => {
+    const spec: JsonObject = {
+      paths: {
+        "/x": {
+          get: {
+            parameters: [
+              { $ref: "other.json#/components/parameters/Id" },
+              { $ref: "#/components/parameters/constructor" },
+            ],
+            requestBody: { $ref: "other.json#/components/requestBodies/Body" },
+            responses: {},
+          },
+        },
+      },
+      components: { parameters: {} },
+    };
+    expect(listOperations(spec)[0]?.requiresInput).toBe(false);
+  });
+
   it("removes repeated tags on one operation", () => {
     const spec: JsonObject = {
       paths: { "/x": { get: { tags: ["a", "a", "b"], responses: {} } } },
@@ -116,24 +135,25 @@ describe("findDuplicateOperationIds", () => {
 });
 
 describe("resolveSelection", () => {
-  it("returns selected keys once each, in document order", () => {
+  function selectedIds(result: ReturnType<typeof resolveSelection>) {
+    return result.ok ? result.selected.map((operation) => operation.id) : result;
+  }
+
+  it("returns selected operations once each, in document order", () => {
     const result = resolveSelection(operations, [
       { method: "get", path: "/health" },
       { method: "post", path: "/books" },
       { method: "get", path: "/health" },
     ]);
-    expect(result).toEqual({
-      ok: true,
-      keys: [
-        { method: "post", path: "/books" },
-        { method: "get", path: "/health" },
-      ],
-    });
+    expect(selectedIds(result)).toEqual(["POST /books", "GET /health"]);
+    if (result.ok) {
+      expect(result.selected[0]).toBe(operations.find((op) => op.id === "POST /books"));
+    }
   });
 
   it("selects methods on the same path independently", () => {
     const result = resolveSelection(operations, [{ method: "post", path: "/books" }]);
-    expect(result).toEqual({ ok: true, keys: [{ method: "post", path: "/books" }] });
+    expect(selectedIds(result)).toEqual(["POST /books"]);
   });
 
   it("rejects an empty selection", () => {

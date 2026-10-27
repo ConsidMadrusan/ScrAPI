@@ -54,9 +54,21 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    files: ["src/components/**/*.{ts,tsx}", "src/app/**/page.tsx"],
-    // Tests are not bundled and may read fixture files.
-    ignores: ["**/*.test.{ts,tsx}"],
+    files: [
+      "src/components/**/*.{ts,tsx}",
+      "src/app/**/page.tsx",
+      // Library code that client components import, directly or transitively.
+      "src/lib/archive/**/*.ts",
+      "src/lib/guides/**/*.ts",
+      "src/lib/openapi/**/*.ts",
+      "src/lib/selection/**/*.ts",
+      "src/lib/targets/**/*.ts",
+      "src/lib/validation/**/*.ts",
+      "src/lib/utils.ts",
+    ],
+    // Tests are not bundled and may read fixture files. The full OpenAPI
+    // validator is itself a server-only module.
+    ignores: ["**/*.test.{ts,tsx}", "src/lib/openapi/validate.ts"],
     rules: {
       "no-restricted-imports": ["error", serverOnlyImports],
     },

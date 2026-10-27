@@ -1,33 +1,47 @@
 import { generateClient } from "@/lib/generation/generate";
 import { prepareGeneration } from "@/lib/generation/prepare";
-import { MAX_REQUEST_BYTES } from "@/lib/validation/limits";
-import { problemsFromZod, type Problem } from "@/lib/validation/problems";
+import {
+  MAX_BODY_READ_MS,
+  MAX_CONCURRENT_GENERATIONS,
+  MAX_REQUEST_BYTES,
+} from "@/lib/validation/limits";
+import { problemsFromZod } from "@/lib/validation/problems";
 import { readJsonBody } from "@/lib/validation/read-request";
 import { generateRequestSchema } from "@/lib/validation/requests";
-import type { FailureResponse } from "@/lib/validation/responses";
+import {
+  createConcurrencyLimiter,
+  failure,
+  withConcurrencyLimit,
+  withProblemHandling,
+} from "@/lib/validation/route-handler";
 
-export async function POST(request: Request): Promise<Response> {
-  const body = await readJsonBody(request, MAX_REQUEST_BYTES);
-  if (!body.ok) return failure(body.status, [body.problem]);
+/** Taken before the body is read, so revalidation also counts against the limit. */
+const generationSlots = createConcurrencyLimiter(MAX_CONCURRENT_GENERATIONS);
 
-  const input = generateRequestSchema.safeParse(body.value);
-  if (!input.success) return failure(400, problemsFromZod(input.error));
+export const POST = withProblemHandling(
+  withConcurrencyLimit(
+    generationSlots,
+    {
+      code: "generator-busy",
+      message: "The server is busy generating other clients. Try again in a moment.",
+    },
+    async (request) => {
+      const body = await readJsonBody(request, MAX_REQUEST_BYTES, MAX_BODY_READ_MS);
+      if (!body.ok) return failure(body.status, [body.problem]);
 
-  const prepared = await prepareGeneration(input.data);
-  if (!prepared.ok) return failure(422, prepared.errors);
+      const input = generateRequestSchema.safeParse(body.value);
+      if (!input.success) return failure(400, problemsFromZod(input.error));
 
-  try {
-    const result = await generateClient(prepared.value);
-    if (!result.ok) return failure(result.status, result.errors);
-    return Response.json(result.value);
-  } catch (error) {
-    // Unexpected server problem: report its type only, never details or content.
-    console.error("Generation crashed", { error: error instanceof Error ? error.name : typeof error });
-    return failure(500, [{ code: "internal", message: "Something went wrong while generating. Try again." }]);
-  }
-}
+      const prepared = await prepareGeneration(input.data);
+      if (!prepared.ok) return failure(422, prepared.errors);
 
-function failure(status: number, errors: Problem[]): Response {
-  const response: FailureResponse = { ok: false, errors };
-  return Response.json(response, { status });
-}
+      const result = await generateClient(prepared.value, request.signal);
+      if (!result.ok) return failure(result.status, result.errors);
+      return Response.json(result.value);
+    },
+  ),
+  {
+    logMessage: "Generation crashed",
+    userMessage: "Something went wrong while generating. Try again.",
+  },
+);

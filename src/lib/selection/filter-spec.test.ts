@@ -143,6 +143,45 @@ describe("filterSpec", () => {
     expect(result.security).toEqual(todo.security);
   });
 
+  it("drops global security when every kept operation declares its own", async () => {
+    const spec: JsonObject = {
+      openapi: "3.0.3",
+      info: { title: "Secured", version: "1" },
+      security: [{ global: [] }],
+      paths: {
+        "/public": {
+          get: { security: [], responses: { "200": { description: "ok" } } },
+        },
+        "/keyed": {
+          get: { security: [{ key: [] }], responses: { "200": { description: "ok" } } },
+        },
+        "/inherits": {
+          get: { responses: { "200": { description: "ok" } } },
+        },
+      },
+      components: {
+        securitySchemes: {
+          global: { type: "http", scheme: "bearer" },
+          key: { type: "apiKey", in: "header", name: "X-Key" },
+        },
+      },
+    };
+
+    const result = filterSpec(spec, [
+      { method: "get", path: "/public" },
+      { method: "get", path: "/keyed" },
+    ]);
+
+    expect(result).not.toHaveProperty("security");
+    expect(names(result, "securitySchemes")).toEqual(["key"]);
+    expect(spec.security).toEqual([{ global: [] }]);
+    await expect(validate(result)).resolves.toBeDefined();
+
+    const inheriting = filterSpec(spec, [{ method: "get", path: "/inherits" }]);
+    expect(inheriting.security).toEqual([{ global: [] }]);
+    expect(names(inheriting, "securitySchemes")).toEqual(["global"]);
+  });
+
   it("follows discriminator mappings by name and by reference", () => {
     const spec: JsonObject = {
       openapi: "3.0.3",
@@ -235,6 +274,16 @@ describe("filterSpec", () => {
 
     expect(() => filterSpec(spec, [{ method: "get", path: "/books" }])).toThrow(
       'Reference "#/components/schemas/Genre" does not resolve.',
+    );
+  });
+
+  it("rejects references into a component that do not resolve, like validation does", () => {
+    const spec = structuredClone(library);
+    const schemas = section(spec, "schemas") as JsonObject;
+    schemas.Tag = { $ref: "#/components/schemas/Genre/missing" };
+
+    expect(() => filterSpec(spec, [{ method: "get", path: "/books" }])).toThrow(
+      'Reference "#/components/schemas/Genre/missing" does not resolve.',
     );
   });
 

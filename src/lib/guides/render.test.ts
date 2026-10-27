@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ANGULAR_APP_DIR, DOTNET_TARGET_FRAMEWORK, resolveTarget } from "@/lib/targets/config";
 import { ALL_OPTIONS, generationResult, TODO_OPERATIONS } from "@/test/generation-fixtures";
 import { renderGuideMarkdown } from "./markdown";
 import { renderGuide } from "./render";
@@ -16,6 +17,26 @@ function codeAndCommands(guide: Guide): string {
 }
 
 describe("renderGuide", () => {
+  it("takes the .NET framework and project name from the C# target configuration", () => {
+    const result = generationResult({ target: "csharp" });
+    const text = JSON.stringify(renderGuide(result));
+    const { generator, archiveRoot } = resolveTarget(result.options);
+
+    expect(generator.additionalProperties.targetFramework).toBe(DOTNET_TARGET_FRAMEWORK);
+    expect(text).toContain(`\`${DOTNET_TARGET_FRAMEWORK}\``);
+    expect(text).toContain(`project ${archiveRoot} is not compatible`);
+  });
+
+  it("edits app.config.ts in the Angular folder that holds the client", () => {
+    const result = generationResult({ target: "typescript-angular" });
+    const editedFiles = blocks(renderGuide(result)).flatMap((block) =>
+      block.kind === "code" && block.action === "edit" ? [block.file] : [],
+    );
+
+    expect(resolveTarget(result.options).destinationRoot.startsWith(`${ANGULAR_APP_DIR}/`)).toBe(true);
+    expect(editedFiles).toEqual([`${ANGULAR_APP_DIR}/app.config.ts`]);
+  });
+
   it.each(ALL_OPTIONS)("covers every generated file exactly once for %j", (options) => {
     const result = generationResult(options);
     const guide = renderGuide(result);
@@ -77,6 +98,24 @@ describe("renderGuide", () => {
       'import { Configuration, TodosApi } from "~/lib/api-client";',
     );
     expect(code({ target: "typescript-nuxt", httpClient: "fetch" })).toContain("return todosApi.listTodos();");
+  });
+
+  it("derives import paths and example locations from the destination folder", () => {
+    const moved = (options: (typeof ALL_OPTIONS)[number], destinationRoot: string) =>
+      renderGuide({ ...generationResult(options), destinationRoot });
+
+    const next = codeAndCommands(moved({ target: "typescript-next", httpClient: "axios" }, "src/shared/client"));
+    expect(next).toContain('from "@/shared/client";');
+    expect(blocks(moved({ target: "typescript-next", httpClient: "axios" }, "src/shared/client"))).toContainEqual(
+      expect.objectContaining({ kind: "code", file: "src/shared/todos-api-example.ts" }),
+    );
+    expect(JSON.stringify(moved({ target: "typescript-nuxt", httpClient: "fetch" }, "app/shared/client"))).toContain(
+      "check that the files are in `app/shared/client/`",
+    );
+    expect(codeAndCommands(moved({ target: "typescript-angular" }, "src/app/core/client"))).toContain(
+      'from "./core/client";',
+    );
+    expect(() => moved({ target: "typescript-next", httpClient: "axios" }, "lib/api-client")).toThrow();
   });
 
   it("asks for axios only when axios was chosen", () => {

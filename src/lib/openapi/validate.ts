@@ -6,9 +6,10 @@ import {
   listOperations,
   type OperationSummary,
 } from "@/lib/selection/operations";
-import { formatLocation, pointerSegments, type SpecError, type SpecResult } from "./errors";
+import { formatLocation, type SpecError, type SpecResult } from "./errors";
 import type { JsonObject } from "./json";
 import { parseSpecification } from "./parse";
+import { pointerSegments } from "./pointer";
 
 const MAX_VALIDATION_ERRORS = 20;
 

@@ -1,4 +1,5 @@
-import { isJsonObject, type JsonObject } from "@/lib/openapi/json";
+import { isJsonObject, type JsonObject, type JsonValue } from "@/lib/openapi/json";
+import { resolveRef } from "@/lib/openapi/pointer";
 import type { OperationGroup, OperationSummary } from "@/lib/validation/responses";
 import {
   formatOperationKey,
@@ -96,13 +97,13 @@ export function findDuplicateOperationIds(
 }
 
 export type SelectionResult =
-  | { ok: true; keys: OperationKey[] }
+  | { ok: true; selected: OperationSummary[] }
   | { ok: false; reason: "empty" }
   | { ok: false; reason: "unknown"; unknownIds: string[] };
 
 /**
  * Checks a submitted selection against the operations in the specification.
- * Returns the selected keys once each, in document order.
+ * Returns the selected operations once each, in document order.
  */
 export function resolveSelection(
   operations: readonly OperationSummary[],
@@ -115,10 +116,8 @@ export function resolveSelection(
   const unknownIds = [...requested].filter((id) => !known.has(id));
   if (unknownIds.length > 0) return { ok: false, reason: "unknown", unknownIds };
 
-  const keys = operations
-    .filter((operation) => requested.has(operation.id))
-    .map(({ method, path }) => ({ method, path }));
-  return { ok: true, keys };
+  const selected = operations.filter((operation) => requested.has(operation.id));
+  return { ok: true, selected };
 }
 
 /**
@@ -138,15 +137,13 @@ function requiresInput(document: JsonObject, pathItem: JsonObject, operation: Js
   return requiredParameter || (isJsonObject(body) && body.required === true);
 }
 
-/** Follows one `#/components/...` reference; other values are returned as they are. */
-function resolveLocal(document: JsonObject, value: JsonObject[string] | undefined) {
+/** Follows one internal reference; other values are returned as they are. */
+function resolveLocal(
+  document: JsonObject,
+  value: JsonValue | undefined,
+): JsonValue | undefined {
   if (!isJsonObject(value) || typeof value.$ref !== "string") return value;
-  let current: JsonObject[string] | undefined = document;
-  for (const segment of value.$ref.replace(/^#\//, "").split("/")) {
-    const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
-    current = isJsonObject(current) ? current[key] : undefined;
-  }
-  return current;
+  return resolveRef(document, value.$ref);
 }
 
 function uniqueStrings(value: unknown): string[] {
