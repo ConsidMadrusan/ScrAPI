@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "properties": {
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "finding": { "type": "string" },
+          "change": { "type": "string" },
+          "reason": { "type": "string" },
+          "files": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["finding", "change", "reason", "files"],
+        "additionalProperties": false
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "finding": { "type": "string" },
+          "reason": { "type": "string" }
+        },
+        "required": ["finding", "reason"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["changes", "unresolved"],
+  "additionalProperties": false
+}

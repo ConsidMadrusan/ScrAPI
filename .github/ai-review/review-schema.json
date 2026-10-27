@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "review": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["blocker", "critical", "high", "major", "medium", "minor", "low", "nit"]
+          },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "title": { "type": "string" },
+          "details": { "type": "string" },
+          "suggestion": { "type": "string" }
+        },
+        "required": ["severity", "file", "title", "details"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["review", "findings"],
+  "additionalProperties": false
+}
