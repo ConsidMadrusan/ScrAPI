@@ -152,7 +152,7 @@ Operations are identified by HTTP method and path, never only by `operationId`, 
 
 ## Generator runtime and deployment
 
-ScrAPI is one Next.js codebase with no Java code of its own. OpenAPI Generator, however, is written in Java. ScrAPI installs it through the npm CLI `@openapitools/openapi-generator-cli`, a Node.js wrapper that downloads the generator's JAR file and runs it with `java`. Installing through npm does **not** remove the need for Java: **a Java runtime must be present wherever generation runs.** That affects deployment:
+ScrAPI is one Next.js codebase with no Java code of its own. OpenAPI Generator, however, is written in Java. ScrAPI uses the npm CLI `@openapitools/openapi-generator-cli` at build time to download the pinned generator JAR. At request time the server runs that JAR directly with `java`. Installing through npm does **not** remove the need for Java: **a Java runtime must be present wherever generation runs.** That affects deployment:
 
 - Generation must run in the Node.js server runtime, **not** an Edge runtime.
 - ScrAPI is therefore shipped as a **Docker image** that bundles Node.js, a Java runtime, the generator, and the built app. Running that container is the only supported deployment.

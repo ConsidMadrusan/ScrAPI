@@ -51,7 +51,22 @@ ScrAPI generates API integration code only: no UI, databases, or business logic.
 
 ### Generated output targets (what ScrAPI produces)
 
-These are **outputs**, not parts of ScrAPI's own stack: C#/.NET, framework-independent TypeScript (shared by Next.js/React and Nuxt/Vue, with different usage instructions), and an Angular client/service structure. Specific OpenAPI Generator generators and options for each target must be chosen and verified during the first implementation spike; do not assume them.
+These are **outputs**, not parts of ScrAPI's own stack: C#/.NET, framework-independent TypeScript (shared by Next.js/React and Nuxt/Vue, with different usage instructions), and an Angular client/service structure.
+
+Verified in the Phase 1 spike with OpenAPI Generator 7.26.0:
+
+| Target | Generator | Verified against |
+| --- | --- | --- |
+| C#/.NET | `csharp`, library `generichost`, `nullableReferenceTypes=true` | `dotnet build` with .NET 10 (`net10.0`), no warnings |
+| TypeScript for Next.js/React and Nuxt/Vue: HTTP client chosen by the user | `typescript-axios` (default) or `typescript-fetch`, with `supportsES6=true` | `tsc` with Next.js 16 defaults. With Nuxt 4.6 defaults, `typescript-axios` compiles. `typescript-fetch` fails in `runtime.ts` (`noUncheckedIndexedAccess`, `noImplicitOverride`), so it needs a version-pinned template override before Nuxt + fetch can be offered. |
+| TypeScript for Angular | `typescript-angular` (`ngVersion` default 22.0.0) | `tsc` 6.0 with Angular 22 strict workspace defaults |
+
+Rules for preparing generator input:
+
+- The generator rejects duplicate `operationId`s. ScrAPI rejects such specifications during validation with a clear error.
+- Operations with several tags produce duplicate exports in TypeScript output. The generator's copy of the specification keeps only each operation's **first** tag, and the guide reflects that class placement. The original specification is unchanged.
+
+Do not claim other generators, options, or framework versions without verifying them the same way.
 
 ### Zod vs. OpenAPI validation
 
@@ -134,6 +149,7 @@ The code standard is enforced by tooling. Run `npm run check` (lint, typecheck, 
   - Test fixtures come from `samples/specs/`.
   - Each phase adds tests for the code it introduces, and those tests must pass before the phase is complete.
 - **Node.js:** use the version in `.nvmrc`. CI and the Docker image use the same version.
+- **Lockfile:** `npm install <pkg>` with an existing lockfile has been seen to drop other platforms' optional binaries (npm/cli#4828), for example `@rolldown/binding-*` or `fsevents`. That breaks `npm ci` in CI. After adding a dependency, check that `grep -c '"node_modules/@rolldown/binding-' package-lock.json` is not 0. If it is, regenerate the lockfile: `rm -rf node_modules package-lock.json && npm install`, then `npm run setup:generator`.
 
 ## Runtime and deployment
 
@@ -144,8 +160,8 @@ The code standard is enforced by tooling. Run `npm run check` (lint, typecheck, 
   - Install the CLI as a regular dependency, recorded in `package.json` and the lockfile. Never run it through `npx` or `npm exec`, which can download packages on demand.
   - Pin the OpenAPI Generator version in the CLI's committed `openapitools.json` configuration. Do not rely on the CLI's default "latest" behavior, and do not invent a version. Choose and verify one during the spike.
   - Download the pinned JAR at Docker build time (and once locally during development setup). Nothing may be downloaded at request time. Treat a missing JAR at runtime as a configuration error, not a reason to fetch it.
-  - Invoke the CLI from server code as a child process with fixed arguments and no shell, as described under Architecture principles.
-  - Next.js standalone output does not trace a CLI that is only started as a child process, so copy the CLI package and the downloaded JAR into the runtime image explicitly.
+  - The npm CLI is a **build-time tool only**: it downloads the pinned JAR (`npm run setup:generator`, and in the Docker build stage). At request time, server code runs the JAR directly as `java -jar <pinned jar> generate …`. It runs as a child process with fixed arguments and no shell, as described under Architecture principles. This keeps the CLI's dependencies, which `npm audit` flags in its download code, out of the runtime image.
+  - Next.js standalone output does not trace the JAR, so copy the pinned JAR into the runtime image explicitly. The CLI package is not needed at runtime.
 - The container host must provide enough memory for the JVM, writable temporary storage, and enough request time for generation. Verify this early.
 
 ## Docker rules
@@ -187,6 +203,7 @@ Rules for the release workflow:
 - Replace the chosen stack or introduce a separate backend (Express, Python, .NET, etc.).
 - Add external dependencies without first explaining the need and getting user approval. Already approved: the technologies named above (Next.js, TypeScript, Tailwind CSS, shadcn/ui, Motion for React, Zod, optional Zustand) and OpenAPI Generator through the npm CLI `@openapitools/openapi-generator-cli`, plus a Java runtime in the Docker image. Also approved:
   - The OpenAPI validator `@apidevtools/swagger-parser`.
+  - `server-only`, which marks server modules.
   - A ZIP library (`jszip`, not yet installed).
   - The packages shadcn/ui installs for its components.
   - The dev tools Vitest, `@vitejs/plugin-react`, `jsdom`, Testing Library (`react`, `dom`, `user-event`, `jest-dom`), and `typescript-eslint`.

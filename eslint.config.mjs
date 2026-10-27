@@ -55,6 +55,8 @@ const eslintConfig = defineConfig([
   },
   {
     files: ["src/components/**/*.{ts,tsx}", "src/app/**/page.tsx"],
+    // Tests are not bundled and may read fixture files.
+    ignores: ["**/*.test.{ts,tsx}"],
     rules: {
       "no-restricted-imports": ["error", serverOnlyImports],
     },
