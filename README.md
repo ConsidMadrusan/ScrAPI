@@ -4,6 +4,10 @@ Generate typed API clients from OpenAPI specifications, choose exactly which end
 
 > **Status: MVP complete, not yet released.** The full workflow works: validate a specification, choose a target, select operations, generate code, download a ZIP, and follow the integration guide. The Docker image builds and runs. No version has been tagged or published yet.
 
+## Demo
+
+https://scrapi-demo.madrusan.se
+
 ## The problem
 
 Consuming an HTTP API usually means writing the same code by hand: DTOs, enums, request and response types, and one client method per endpoint, then keeping them in sync with the API. It is repetitive and error-prone, and generator tools that automate it often produce output for the whole API with little guidance on where the files belong in a real project.
@@ -40,21 +44,21 @@ The original specification is preserved. ScrAPI filters a separate copy and keep
 
 ## Targets and output
 
-| Target | Generated client | Typical contents | Integration guide covers |
-| --- | --- | --- | --- |
-| C#/.NET | C# client library | Models/DTOs, enums, typed API methods, client configuration, project/dependency metadata | Adding the code to a supported .NET project layout, required package references, configuring the base URL, calling a selected method |
-| TypeScript for Next.js/React | Framework-independent TypeScript client (shared with Nuxt/Vue) | Model interfaces/types, enums, typed API methods, client configuration | Placement in a supported Next.js App Router layout, configuration, calling a selected method from server or client code |
-| TypeScript for Nuxt/Vue | Same framework-independent TypeScript client | Same as above | Placement in a supported Nuxt layout, configuration, calling a selected method |
-| TypeScript for Angular | Angular client/service structure | Models, enums, injectable API services, configuration | Placement in a supported Angular layout, registering HTTP/client providers, injecting and calling a service |
+| Target                       | Generated client                                               | Typical contents                                                                         | Integration guide covers                                                                                                             |
+| ---------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| C#/.NET                      | C# client library                                              | Models/DTOs, enums, typed API methods, client configuration, project/dependency metadata | Adding the code to a supported .NET project layout, required package references, configuring the base URL, calling a selected method |
+| TypeScript for Next.js/React | Framework-independent TypeScript client (shared with Nuxt/Vue) | Model interfaces/types, enums, typed API methods, client configuration                   | Placement in a supported Next.js App Router layout, configuration, calling a selected method from server or client code              |
+| TypeScript for Nuxt/Vue      | Same framework-independent TypeScript client                   | Same as above                                                                            | Placement in a supported Nuxt layout, configuration, calling a selected method                                                       |
+| TypeScript for Angular       | Angular client/service structure                               | Models, enums, injectable API services, configuration                                    | Placement in a supported Angular layout, registering HTTP/client providers, injecting and calling a service                          |
 
 Verified setups (OpenAPI Generator 7.26.0). Each guide documents one supported project layout:
 
-| Target | Generator | Files go to | Verified by following the guide in |
-| --- | --- | --- | --- |
-| Next.js/React | `typescript-axios` or `typescript-fetch` (you choose the HTTP client) | `src/lib/api-client/` | A `create-next-app` project (Next.js 16.4, App Router, `src/`): `tsc` and `next build` |
-| Nuxt/Vue | Same as Next.js | `app/lib/api-client/` | A `nuxi init` project (Nuxt 4.6): `nuxi typecheck` (vue-tsc, TypeScript 6) and `nuxt build` |
-| Angular | `typescript-angular` | `src/app/api-client/` | An `ng new` standalone app (Angular 22.2): `ng build` |
-| C#/.NET | `csharp` (`generichost`, `net10.0`) | `src/ApiClient/` next to your solution | A `dotnet new webapi` project (.NET 10): `dotnet build` |
+| Target        | Generator                                                             | Files go to                            | Verified by following the guide in                                                          |
+| ------------- | --------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Next.js/React | `typescript-axios` or `typescript-fetch` (you choose the HTTP client) | `src/lib/api-client/`                  | A `create-next-app` project (Next.js 16.4, App Router, `src/`): `tsc` and `next build`      |
+| Nuxt/Vue      | Same as Next.js                                                       | `app/lib/api-client/`                  | A `nuxi init` project (Nuxt 4.6): `nuxi typecheck` (vue-tsc, TypeScript 6) and `nuxt build` |
+| Angular       | `typescript-angular`                                                  | `src/app/api-client/`                  | An `ng new` standalone app (Angular 22.2): `ng build`                                       |
+| C#/.NET       | `csharp` (`generichost`, `net10.0`)                                   | `src/ApiClient/` next to your solution | A `dotnet new webapi` project (.NET 10): `dotnet build`                                     |
 
 Other framework versions or layouts may work but have not been tested.
 
@@ -78,7 +82,7 @@ Both delivery options are built from the **same generation result**, so file pat
 - Basic verification steps and common integration errors.
 - Previous/next navigation and a visible step indicator.
 
-Guides are deterministic templates per target, not AI-generated. They document one supported project layout per target and do not claim to fit every project. They separate *adding new files* from *small changes to existing configuration*, and never ask you to replace existing application files wholesale.
+Guides are deterministic templates per target, not AI-generated. They document one supported project layout per target and do not claim to fit every project. They separate _adding new files_ from _small changes to existing configuration_, and never ask you to replace existing application files wholesale.
 
 ## What "typed generation" means
 
@@ -121,17 +125,17 @@ Explicitly excluded:
 
 ScrAPI's own implementation stack, separate from the targets it generates:
 
-| Technology | Why |
-| --- | --- |
-| **Next.js App Router** + **TypeScript (strict mode)** | One codebase for UI and server logic. Server Components by default, server code for validation, generation orchestration, and ZIP responses. Strict typing catches mistakes early. |
-| **Tailwind CSS** | Fast, consistent styling without a custom CSS framework. |
-| **shadcn/ui** | Accessible components that live in the repository and can be adapted. |
-| **Motion for React** (formerly Framer Motion) | Guide step transitions and small feedback animations, free features only, respecting reduced-motion preferences. |
-| **Zod** | Runtime validation of application-owned data: request payloads, generation options, operation selections. TypeScript types are inferred from the schemas. |
-| **Zustand** (optional) | Used only if shared client state across specification, selection, results, and guide becomes awkward with local React state. Not used for server request state. |
+| Technology                                                                   | Why                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Next.js App Router** + **TypeScript (strict mode)**                        | One codebase for UI and server logic. Server Components by default, server code for validation, generation orchestration, and ZIP responses. Strict typing catches mistakes early.                                      |
+| **Tailwind CSS**                                                             | Fast, consistent styling without a custom CSS framework.                                                                                                                                                                |
+| **shadcn/ui**                                                                | Accessible components that live in the repository and can be adapted.                                                                                                                                                   |
+| **Motion for React** (formerly Framer Motion)                                | Guide step transitions and small feedback animations, free features only, respecting reduced-motion preferences.                                                                                                        |
+| **Zod**                                                                      | Runtime validation of application-owned data: request payloads, generation options, operation selections. TypeScript types are inferred from the schemas.                                                               |
+| **Zustand** (optional)                                                       | Used only if shared client state across specification, selection, results, and guide becomes awkward with local React state. Not used for server request state.                                                         |
 | **OpenAPI Generator**, via the npm CLI `@openapitools/openapi-generator-cli` | Existing, deterministic, widely used generator covering the needed targets. Avoids building a custom generation engine. Installed as a normal npm dependency, with the generator version pinned in `openapitools.json`. |
-| **Docker** | The only supported way to run ScrAPI outside development. One image contains the Next.js server, the Java runtime, and the generator. |
-| **GitHub Actions + GitHub Container Registry** | Publishes the Docker image to `ghcr.io` when a version tag is pushed. |
+| **Docker**                                                                   | The only supported way to run ScrAPI outside development. One image contains the Next.js server, the Java runtime, and the generator.                                                                                   |
+| **GitHub Actions + GitHub Container Registry**                               | Publishes the Docker image to `ghcr.io` when a version tag is pushed.                                                                                                                                                   |
 
 Zod and Zustand are approved dependencies. Zustand is installed only if implementation shows it is needed. Any other dependency (for example an OpenAPI validator package, a ZIP library, or a syntax highlighter) needs explicit approval first.
 
@@ -189,10 +193,10 @@ Then open http://localhost:3000.
 - `--memory 512m`: a container that generated every target from the sample specifications peaked at about 230 MB, including the JVM. Leave more headroom for large specifications.
 - The container needs no outbound network access. The generator is part of the image and nothing is downloaded at runtime.
 
-| Environment variable | Default in the image | Purpose |
-| --- | --- | --- |
-| `PORT` | `3000` | Port the server listens on. |
-| `HOSTNAME` | `0.0.0.0` | Address the server binds to. |
+| Environment variable | Default in the image | Purpose                      |
+| -------------------- | -------------------- | ---------------------------- |
+| `PORT`               | `3000`               | Port the server listens on.  |
+| `HOSTNAME`           | `0.0.0.0`            | Address the server binds to. |
 
 New GHCR packages are private by default. To allow anonymous `docker pull`, the repository owner must make the package public in its GitHub package settings.
 
@@ -227,13 +231,13 @@ Images are published by `.github/workflows/release-image.yml`. Pushing a tag lik
 
 This is a **tight MVP schedule, not a guaranteed delivery estimate**. Endpoint selection and the visual integration guide are required, and supporting both across four targets leaves little slack. The plan front-loads the riskiest work: generator output, operation filtering, and real integration examples.
 
-| Week | Focus | Est. hours |
-| --- | --- | --- |
-| 1 | **Verification spike.** Run OpenAPI Generator through its npm CLI from a Node.js server context, and choose the generator version to pin. Pick generators and options for each target. Generate from representative specs and compile the output in minimal sample projects (.NET, Next.js, Nuxt, Angular). Prototype reference-preserving operation filtering and confirm filtered specs still generate. Confirm the generator runs inside a container with Node.js and a Java runtime. Scaffold the Next.js app. | ~6 |
-| 2 | **Input and selection.** Paste/upload, JSON parsing, Zod input schemas, OpenAPI validation, version and external-reference checks, clear errors. Operation list grouped by tag, search, individual/group/all selection, counts, server-side revalidation, finished filtering. | ~5 |
-| 3 | **Generation and ZIP.** Centralized target configuration, generation orchestration with temp-dir lifecycle and limits, path safety, ZIP response, invalidation of stale results. | ~4 |
-| 4 | **Guides and acceptance.** Per-target guide templates, folder tree, file viewer with copy, path mapping, usage examples from selected operations, verification and common errors, navigation. Finish the `Dockerfile` and `.dockerignore`, and publish a first tagged image. Run the acceptance criteria against sample projects. Update this README with real setup instructions. | ~5 |
-| | **Total** | **~20** |
+| Week | Focus                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Est. hours |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| 1    | **Verification spike.** Run OpenAPI Generator through its npm CLI from a Node.js server context, and choose the generator version to pin. Pick generators and options for each target. Generate from representative specs and compile the output in minimal sample projects (.NET, Next.js, Nuxt, Angular). Prototype reference-preserving operation filtering and confirm filtered specs still generate. Confirm the generator runs inside a container with Node.js and a Java runtime. Scaffold the Next.js app. | ~6         |
+| 2    | **Input and selection.** Paste/upload, JSON parsing, Zod input schemas, OpenAPI validation, version and external-reference checks, clear errors. Operation list grouped by tag, search, individual/group/all selection, counts, server-side revalidation, finished filtering.                                                                                                                                                                                                                                      | ~5         |
+| 3    | **Generation and ZIP.** Centralized target configuration, generation orchestration with temp-dir lifecycle and limits, path safety, ZIP response, invalidation of stale results.                                                                                                                                                                                                                                                                                                                                   | ~4         |
+| 4    | **Guides and acceptance.** Per-target guide templates, folder tree, file viewer with copy, path mapping, usage examples from selected operations, verification and common errors, navigation. Finish the `Dockerfile` and `.dockerignore`, and publish a first tagged image. Run the acceptance criteria against sample projects. Update this README with real setup instructions.                                                                                                                                 | ~5         |
+|      | **Total**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | **~20**    |
 
 Optional polish that can be deferred if time runs short (without dropping required features): animations beyond basic step transitions, drag-and-drop upload (a file input is enough), visual refinements to the folder tree, search-match highlighting, dark mode, and extra sample specifications beyond the representative set.
 
