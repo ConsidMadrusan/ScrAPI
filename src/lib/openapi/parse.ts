@@ -1,15 +1,17 @@
 import { formatMegabytes, MAX_SPEC_BYTES, utf8ByteLength } from "@/lib/validation/limits";
-import {
-  formatLocation,
-  pointerSegments,
-  type SpecError,
-  type SpecResult,
-} from "./errors";
+import { formatLocation, type SpecError, type SpecResult } from "./errors";
 import { isJsonObject, type JsonObject, type JsonValue } from "./json";
+import { resolveRef } from "./pointer";
 
 const SUPPORTED_VERSION = /^3\.0\.\d+$/;
 const YAML_START = /^(---|%YAML|#|[A-Za-z_][\w.-]*\s*:)/;
 const MAX_REFERENCE_ERRORS = 20;
+
+/**
+ * Deepest accepted nesting of objects and arrays. Real specifications stay far
+ * below this; the limit keeps recursive processing safe from stack overflows.
+ */
+export const MAX_NESTING_DEPTH = 128;
 
 /**
  * Checks everything that does not need the full OpenAPI validator: size, JSON
@@ -120,40 +122,70 @@ function checkVersion(document: JsonObject): SpecError | undefined {
   return undefined;
 }
 
-/** Every `$ref` must point inside `#/components/` and resolve. */
+/** An object or array still to visit, linked to its parent for error locations. */
+interface Container {
+  value: JsonObject | JsonValue[];
+  key: string | undefined;
+  parent: Container | undefined;
+  depth: number;
+}
+
+/**
+ * Every `$ref` must point inside `#/components/` and resolve. Walks the
+ * document iteratively in linear time and rejects documents nested deeper
+ * than `MAX_NESTING_DEPTH`, so later recursive steps (the OpenAPI validator,
+ * filtering) cannot overflow the stack.
+ */
 function checkReferences(document: JsonObject): SpecError[] {
   const errors: SpecError[] = [];
+  const pending: Container[] = [{ value: document, key: undefined, parent: undefined, depth: 1 }];
 
-  const visit = (value: JsonValue, segments: string[]) => {
-    if (errors.length >= MAX_REFERENCE_ERRORS) return;
-    if (Array.isArray(value)) {
-      value.forEach((child, index) => {
-        visit(child, [...segments, String(index)]);
-      });
-      return;
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (errors.length >= MAX_REFERENCE_ERRORS) break;
+    if (next.depth > MAX_NESTING_DEPTH) {
+      return [
+        {
+          code: "too-deep",
+          message: `The specification is nested more than ${String(MAX_NESTING_DEPTH)} levels deep.`,
+          location: formatLocation(segmentsOf(next)),
+        },
+      ];
     }
-    if (!isJsonObject(value)) return;
+    const children: [string, JsonValue][] = Array.isArray(next.value)
+      ? next.value.map((child, index) => [String(index), child])
+      : Object.entries(next.value);
 
-    for (const [key, child] of Object.entries(value)) {
-      if (key === "$ref" && typeof child === "string") {
-        const error = checkReference(document, child, segments);
+    // Push in reverse so containers are visited in document order.
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const entry = children[index];
+      if (entry === undefined) continue;
+      const [key, child] = entry;
+      if (!Array.isArray(next.value) && key === "$ref" && typeof child === "string") {
+        const error = checkReference(document, child, next);
         if (error) errors.push(error);
-      } else {
-        visit(child, [...segments, key]);
+      } else if (Array.isArray(child) || isJsonObject(child)) {
+        pending.push({ value: child, key, parent: next, depth: next.depth + 1 });
       }
     }
-  };
-
-  visit(document, []);
+  }
   return errors;
+}
+
+/** Location segments of a container, built only when an error is reported. */
+function segmentsOf(container: Container): string[] {
+  const segments: string[] = [];
+  for (let current: Container | undefined = container; current; current = current.parent) {
+    if (current.key !== undefined) segments.push(current.key);
+  }
+  return segments.reverse();
 }
 
 function checkReference(
   document: JsonObject,
   ref: string,
-  segments: string[],
+  container: Container,
 ): SpecError | undefined {
-  const location = formatLocation(segments);
+  const location = formatLocation(segmentsOf(container));
   if (!ref.startsWith("#")) {
     return {
       code: "external-ref",
@@ -168,7 +200,7 @@ function checkReference(
       location,
     };
   }
-  if (resolvePointer(document, ref.slice(1)) === undefined) {
+  if (resolveRef(document, ref) === undefined) {
     return {
       code: "unresolved-ref",
       message: `The reference "${ref}" does not point to anything in the specification.`,
@@ -176,18 +208,4 @@ function checkReference(
     };
   }
   return undefined;
-}
-
-function resolvePointer(document: JsonObject, pointer: string): JsonValue | undefined {
-  let current: JsonValue | undefined = document;
-  for (const segment of pointerSegments(pointer)) {
-    if (Array.isArray(current)) {
-      current = current[Number(segment)];
-    } else if (isJsonObject(current)) {
-      current = Object.hasOwn(current, segment) ? current[segment] : undefined;
-    } else {
-      return undefined;
-    }
-  }
-  return current;
 }

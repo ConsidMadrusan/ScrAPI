@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import type * as FsPromises from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GeneratorOutcome, GeneratorRun } from "./java-generator";
@@ -8,7 +9,21 @@ import type { PreparedGeneration } from "./prepare";
 const runGeneratorMock = vi.hoisted(() => vi.fn<(run: GeneratorRun) => Promise<GeneratorOutcome>>());
 vi.mock("./java-generator", () => ({ runGenerator: runGeneratorMock }));
 
-const { generateClient, MAX_CONCURRENT_GENERATIONS } = await import("./generate");
+/** Fails the next `rm` call when set, to test cleanup failures. */
+const rmFailure = vi.hoisted(() => ({ next: undefined as Error | undefined }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  return {
+    ...actual,
+    rm: (...args: Parameters<typeof actual.rm>) => {
+      const error = rmFailure.next;
+      rmFailure.next = undefined;
+      return error ? Promise.reject(error) : actual.rm(...args);
+    },
+  };
+});
+
+const { generateClient, MAX_CONCURRENT_GENERATIONS, withTempDir } = await import("./generate");
 
 const prepared: PreparedGeneration = {
   options: { target: "typescript-next", httpClient: "fetch" },
@@ -178,5 +193,35 @@ describe("generateClient", () => {
     expect(logged).toContain("typescript-next");
     expect(logged).not.toContain("/todos");
     expect(logged).not.toContain("openapi");
+  });
+});
+
+describe("withTempDir", () => {
+  it("keeps the result when removing the folder fails, and logs only the error type", async () => {
+    rmFailure.next = Object.assign(new Error("EBUSY: /tmp/scrapi-abc"), { name: "SystemError" });
+    let used = "";
+
+    const result = await withTempDir((dir) => {
+      used = dir;
+      return Promise.resolve("done");
+    });
+
+    expect(result).toBe("done");
+    expect(console.error).toHaveBeenCalledWith("Could not remove the generation folder", {
+      error: "SystemError",
+    });
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("/tmp");
+    await rm(used, { recursive: true, force: true });
+  });
+
+  it("removes the folder after the callback throws", async () => {
+    let used = "";
+    await expect(
+      withTempDir((dir) => {
+        used = dir;
+        return Promise.reject(new Error("boom"));
+      }),
+    ).rejects.toThrow("boom");
+    expect(existsSync(used)).toBe(false);
   });
 });

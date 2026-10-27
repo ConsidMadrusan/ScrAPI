@@ -1,4 +1,5 @@
-import { isJsonObject, type JsonObject } from "@/lib/openapi/json";
+import { isJsonObject, type JsonObject, type JsonValue } from "@/lib/openapi/json";
+import { resolveRef } from "@/lib/openapi/pointer";
 import type { OperationGroup, OperationSummary } from "@/lib/validation/responses";
 import {
   formatOperationKey,
@@ -136,15 +137,13 @@ function requiresInput(document: JsonObject, pathItem: JsonObject, operation: Js
   return requiredParameter || (isJsonObject(body) && body.required === true);
 }
 
-/** Follows one `#/components/...` reference; other values are returned as they are. */
-function resolveLocal(document: JsonObject, value: JsonObject[string] | undefined) {
+/** Follows one internal reference; other values are returned as they are. */
+function resolveLocal(
+  document: JsonObject,
+  value: JsonValue | undefined,
+): JsonValue | undefined {
   if (!isJsonObject(value) || typeof value.$ref !== "string") return value;
-  let current: JsonObject[string] | undefined = document;
-  for (const segment of value.$ref.replace(/^#\//, "").split("/")) {
-    const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
-    current = isJsonObject(current) ? current[key] : undefined;
-  }
-  return current;
+  return resolveRef(document, value.$ref);
 }
 
 function uniqueStrings(value: unknown): string[] {

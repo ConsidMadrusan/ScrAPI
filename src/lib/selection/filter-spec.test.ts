@@ -277,6 +277,16 @@ describe("filterSpec", () => {
     );
   });
 
+  it("rejects references into a component that do not resolve, like validation does", () => {
+    const spec = structuredClone(library);
+    const schemas = section(spec, "schemas") as JsonObject;
+    schemas.Tag = { $ref: "#/components/schemas/Genre/missing" };
+
+    expect(() => filterSpec(spec, [{ method: "get", path: "/books" }])).toThrow(
+      'Reference "#/components/schemas/Genre/missing" does not resolve.',
+    );
+  });
+
   it("rejects external references", () => {
     const spec = structuredClone(library);
     const schemas = section(spec, "schemas") as JsonObject;

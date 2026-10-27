@@ -1,4 +1,5 @@
 import { isJsonObject, type JsonObject, type JsonValue } from "@/lib/openapi/json";
+import { escapeSegment, resolveRef, unescapeSegment } from "@/lib/openapi/pointer";
 import {
   formatOperationKey,
   HTTP_METHODS,
@@ -35,9 +36,9 @@ export function filterSpec(
   const components = isJsonObject(spec.components) ? spec.components : {};
 
   const securityRefs = securitySchemeNames(spec.security, keptOperations).map(
-    (name) => `#/components/securitySchemes/${escapePointer(name)}`,
+    (name) => `#/components/securitySchemes/${escapeSegment(name)}`,
   );
-  const kept = collectComponents(components, keptPaths, securityRefs);
+  const kept = collectComponents(spec, keptPaths, securityRefs);
 
   const result: JsonObject = { ...spec, paths: keptPaths };
   // Root security only applies to operations without their own. When no kept
@@ -160,7 +161,7 @@ function securitySchemeNames(
  * visited once.
  */
 function collectComponents(
-  components: JsonObject,
+  spec: JsonObject,
   root: JsonValue,
   extraRefs: readonly string[],
 ): KeptComponents {
@@ -176,13 +177,12 @@ function collectComponents(
         `Unsupported reference "${ref}". Only "#/components/..." references can be used.`,
       );
     }
-    const name = unescapePointer(encodedName);
-    const sectionObject = components[section];
-    const target = isJsonObject(sectionObject) ? sectionObject[name] : undefined;
-    if (target === undefined) {
+    const target = resolveRef(spec, `#/components/${section}/${encodedName}`);
+    if (target === undefined || resolveRef(spec, ref) === undefined) {
       throw new SpecFilterError(`Reference "${ref}" does not resolve.`);
     }
 
+    const name = unescapeSegment(encodedName);
     const names = kept.get(section) ?? new Set<string>();
     kept.set(section, names);
     if (!names.has(name)) {
@@ -230,7 +230,7 @@ function visitDiscriminatorMapping(
     visitRef(
       target.startsWith("#/")
         ? target
-        : `#/components/schemas/${escapePointer(target)}`,
+        : `#/components/schemas/${escapeSegment(target)}`,
     );
   }
 }
@@ -270,12 +270,4 @@ function pickTags(
     (tag) => isJsonObject(tag) && typeof tag.name === "string" && used.has(tag.name),
   );
   return kept.length > 0 ? kept : undefined;
-}
-
-function escapePointer(segment: string): string {
-  return segment.replaceAll("~", "~0").replaceAll("/", "~1");
-}
-
-function unescapePointer(segment: string): string {
-  return segment.replaceAll("~1", "/").replaceAll("~0", "~");
 }

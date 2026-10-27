@@ -3,9 +3,9 @@ import "server-only";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveTarget } from "@/lib/targets/config";
+import { resolveTarget, type TargetConfig } from "@/lib/targets/config";
 import type { Problem } from "@/lib/validation/problems";
-import type { GenerateSuccess } from "@/lib/validation/responses";
+import type { GeneratedFile, GenerateSuccess } from "@/lib/validation/responses";
 import { collectOutput, OutputLimitError } from "./collect-output";
 import { keepFirstTagOnly } from "./generator-input";
 import { runGenerator, type GeneratorOutcome } from "./java-generator";
@@ -44,58 +44,64 @@ export async function generateClient(
   }
   activeGenerations += 1;
   try {
-    return await generateInTempDir(prepared, signal);
+    const target = resolveTarget(prepared.options);
+    return await withTempDir((workDir) => runAndCollect(prepared, target, workDir, signal));
   } finally {
     activeGenerations -= 1;
   }
 }
 
-async function generateInTempDir(
+/**
+ * Runs `fn` in a new per-request temporary folder and removes the folder
+ * afterwards. A failed removal is logged but does not replace `fn`'s result.
+ */
+export async function withTempDir<T>(fn: (workDir: string) => Promise<T>): Promise<T> {
+  const workDir = await mkdtemp(join(tmpdir(), "scrapi-"));
+  try {
+    return await fn(workDir);
+  } finally {
+    try {
+      await rm(workDir, { recursive: true, force: true });
+    } catch (error) {
+      // Error type only: the path and message are server details.
+      console.error("Could not remove the generation folder", {
+        error: error instanceof Error ? error.name : typeof error,
+      });
+    }
+  }
+}
+
+/** Writes the generator input, runs the generator, and collects its output. */
+async function runAndCollect(
   prepared: PreparedGeneration,
+  target: TargetConfig,
+  workDir: string,
   signal: AbortSignal | undefined,
 ): Promise<GenerateResult> {
-  const target = resolveTarget(prepared.options);
   const startedAt = Date.now();
-  const workDir = await mkdtemp(join(tmpdir(), "scrapi-"));
+  const specPath = join(workDir, "spec.json");
+  const outputDir = join(workDir, "output");
+  await writeFile(specPath, JSON.stringify(keepFirstTagOnly(prepared.filteredSpec)), "utf8");
 
-  try {
-    const specPath = join(workDir, "spec.json");
-    const outputDir = join(workDir, "output");
-    await writeFile(specPath, JSON.stringify(keepFirstTagOnly(prepared.filteredSpec)), "utf8");
-
-    const outcome = await runGenerator({
-      settings: target.generator,
-      specPath,
-      outputDir,
-      ...(signal === undefined ? {} : { signal }),
+  const outcome = await runGenerator({
+    settings: target.generator,
+    specPath,
+    outputDir,
+    ...(signal === undefined ? {} : { signal }),
+  });
+  if (outcome.status !== "ok") {
+    // Metadata only: never the specification or generated code.
+    console.warn("Generation failed", {
+      target: prepared.options.target,
+      status: outcome.status,
+      durationMs: Date.now() - startedAt,
     });
-    if (outcome.status !== "ok") {
-      // Metadata only: never the specification or generated code.
-      console.warn("Generation failed", {
-        target: prepared.options.target,
-        status: outcome.status,
-        durationMs: Date.now() - startedAt,
-      });
-      return generatorFailure(outcome);
-    }
+    return generatorFailure(outcome);
+  }
 
-    const files = await collectOutput(outputDir, target);
-    if (files.length === 0) {
-      console.error("Generation produced no files", { target: prepared.options.target });
-      return failure(500, "generation-failed", "The generator produced no files for this selection.");
-    }
-
-    return {
-      ok: true,
-      value: {
-        ok: true,
-        options: prepared.options,
-        archiveRoot: target.archiveRoot,
-        destinationRoot: target.destinationRoot,
-        operations: prepared.selected,
-        files,
-      },
-    };
+  let files: GeneratedFile[];
+  try {
+    files = await collectOutput(outputDir, target);
   } catch (error) {
     if (error instanceof OutputLimitError) {
       return failure(
@@ -105,9 +111,30 @@ async function generateInTempDir(
       );
     }
     throw error;
-  } finally {
-    await rm(workDir, { recursive: true, force: true });
   }
+  if (files.length === 0) {
+    console.error("Generation produced no files", { target: prepared.options.target });
+    return failure(500, "generation-failed", "The generator produced no files for this selection.");
+  }
+  return toSuccess(prepared, target, files);
+}
+
+function toSuccess(
+  prepared: PreparedGeneration,
+  target: TargetConfig,
+  files: GeneratedFile[],
+): GenerateResult {
+  return {
+    ok: true,
+    value: {
+      ok: true,
+      options: prepared.options,
+      archiveRoot: target.archiveRoot,
+      destinationRoot: target.destinationRoot,
+      operations: prepared.selected,
+      files,
+    },
+  };
 }
 
 function generatorFailure(

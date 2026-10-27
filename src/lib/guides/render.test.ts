@@ -79,6 +79,24 @@ describe("renderGuide", () => {
     expect(code({ target: "typescript-nuxt", httpClient: "fetch" })).toContain("return todosApi.listTodos();");
   });
 
+  it("derives import paths and example locations from the destination folder", () => {
+    const moved = (options: (typeof ALL_OPTIONS)[number], destinationRoot: string) =>
+      renderGuide({ ...generationResult(options), destinationRoot });
+
+    const next = codeAndCommands(moved({ target: "typescript-next", httpClient: "axios" }, "src/shared/client"));
+    expect(next).toContain('from "@/shared/client";');
+    expect(blocks(moved({ target: "typescript-next", httpClient: "axios" }, "src/shared/client"))).toContainEqual(
+      expect.objectContaining({ kind: "code", file: "src/shared/todos-api-example.ts" }),
+    );
+    expect(JSON.stringify(moved({ target: "typescript-nuxt", httpClient: "fetch" }, "app/shared/client"))).toContain(
+      "check that the files are in `app/shared/client/`",
+    );
+    expect(codeAndCommands(moved({ target: "typescript-angular" }, "src/app/core/client"))).toContain(
+      'from "./core/client";',
+    );
+    expect(() => moved({ target: "typescript-next", httpClient: "axios" }, "lib/api-client")).toThrow();
+  });
+
   it("asks for axios only when axios was chosen", () => {
     const commands = (httpClient: "axios" | "fetch") =>
       codeAndCommands(renderGuide(generationResult({ target: "typescript-next", httpClient })));

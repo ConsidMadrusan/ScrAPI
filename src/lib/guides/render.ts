@@ -35,10 +35,11 @@ const FRAMEWORKS = {
       "A Next.js 16 project with the App Router and TypeScript, using the `src/` directory.",
       "The default `@/*` import alias that points to `src/*` (created by `create-next-app`).",
     ],
-    importPath: "@/lib/api-client",
-    exampleDir: "src/lib",
+    /** The `@/*` alias resolves `src/*`. */
+    alias: { prefix: "@/", root: "src" },
     verify: ["npx tsc --noEmit", "npm run build"],
-    aliasError: "Cannot find module '@/lib/api-client': the `@/*` alias is missing. Add `\"paths\": { \"@/*\": [\"./src/*\"] }` to `compilerOptions` in `tsconfig.json`, or import with a relative path.",
+    aliasError: (importPath: string) =>
+      `Cannot find module '${importPath}': the \`@/*\` alias is missing. Add \`"paths": { "@/*": ["./src/*"] }\` to \`compilerOptions\` in \`tsconfig.json\`, or import with a relative path.`,
   },
   "typescript-nuxt": {
     name: "Nuxt",
@@ -46,12 +47,31 @@ const FRAMEWORKS = {
       "A Nuxt 4 project with the default `app/` source directory.",
       "The default `~` alias, which points to `app/`.",
     ],
-    importPath: "~/lib/api-client",
-    exampleDir: "app/lib",
+    /** The `~` alias resolves `app/`. */
+    alias: { prefix: "~/", root: "app" },
     verify: ["npm install --save-dev vue-tsc typescript@^6", "npx nuxi typecheck", "npm run build"],
-    aliasError: "Cannot find module '~/lib/api-client': check that the files are in `app/lib/api-client/` (Nuxt 4 uses `app/` as its source directory).",
+    aliasError: (importPath: string, destinationRoot: string) =>
+      `Cannot find module '${importPath}': check that the files are in \`${destinationRoot}/\` (Nuxt 4 uses \`app/\` as its source directory).`,
   },
 } as const;
+
+/** Angular CLI layout: the application folder and its providers file. */
+const ANGULAR_APP_DIR = "src/app";
+const ANGULAR_APP_CONFIG = `${ANGULAR_APP_DIR}/app.config.ts`;
+
+/** The import specifier for the destination folder through the framework's alias. */
+function aliasImportPath(destinationRoot: string, alias: { prefix: string; root: string }): string {
+  if (!destinationRoot.startsWith(`${alias.root}/`)) {
+    throw new Error(`The destination ${destinationRoot} is outside the alias root ${alias.root}/.`);
+  }
+  return `${alias.prefix}${destinationRoot.slice(alias.root.length + 1)}`;
+}
+
+/** The folder that contains `path` (`/`-separated). */
+function parentDir(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index === -1 ? "." : path.slice(0, index);
+}
 
 function typescriptGuide(
   result: GenerateSuccess,
@@ -60,9 +80,12 @@ function typescriptGuide(
   usage: UsageExample | undefined,
 ): Guide {
   const framework = FRAMEWORKS[target];
-  const exampleFile = usage ? `${framework.exampleDir}/${kebabCase(usage.typeName)}-example.ts` : "";
+  // The example sits next to the client folder, so every path follows the destination.
+  const importPath = aliasImportPath(result.destinationRoot, framework.alias);
+  const exampleDir = parentDir(result.destinationRoot);
+  const exampleFile = usage ? `${exampleDir}/${kebabCase(usage.typeName)}-example.ts` : "";
   const commonErrors = [
-    framework.aliasError,
+    framework.aliasError(importPath, result.destinationRoot),
     ...(httpClient === "axios"
       ? ["Cannot find module 'axios': run `npm install axios`."]
       : []),
@@ -121,7 +144,7 @@ function typescriptGuide(
                 language: "ts",
                 file: exampleFile,
                 action: "create",
-                code: typescriptExample(usage, framework.importPath, httpClient),
+                code: typescriptExample(usage, importPath, httpClient),
               },
               ...signatureNote(usage),
               {
@@ -160,7 +183,9 @@ function typescriptExample(usage: UsageExample, importPath: string, httpClient: 
 
 function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined): Guide {
   const exampleClass = usage ? `${pascalCase(usage.methodName)}Example` : "";
-  const exampleFile = usage ? `src/app/${kebabCase(usage.methodName)}-example.ts` : "";
+  // Both app.config.ts and the example live in `src/app/`, next to the client folder.
+  const importPath = aliasImportPath(result.destinationRoot, { prefix: "./", root: ANGULAR_APP_DIR });
+  const exampleFile = usage ? `${ANGULAR_APP_DIR}/${kebabCase(usage.methodName)}-example.ts` : "";
 
   return {
     title: "Add the TypeScript client to your Angular project",
@@ -174,7 +199,7 @@ function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined):
             kind: "list",
             items: [
               "An Angular 22 standalone application created with the Angular CLI.",
-              "Application providers in `src/app/app.config.ts`.",
+              `Application providers in \`${ANGULAR_APP_CONFIG}\`.`,
             ],
           },
           {
@@ -189,16 +214,16 @@ function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined):
         blocks: [
           {
             kind: "text",
-            text: "Edit `src/app/app.config.ts`: add the two imports and the two providers. Keep your existing providers. If `provideHttpClient()` is already there, do not add it twice.",
+            text: `Edit \`${ANGULAR_APP_CONFIG}\`: add the two imports and the two providers. Keep your existing providers. If \`provideHttpClient()\` is already there, do not add it twice.`,
           },
           {
             kind: "code",
             language: "ts",
-            file: "src/app/app.config.ts",
+            file: ANGULAR_APP_CONFIG,
             action: "edit",
             code: [
               'import { provideHttpClient } from "@angular/common/http";',
-              'import { provideApi } from "./api-client";',
+              `import { provideApi } from "${importPath}";`,
               "",
               "export const appConfig: ApplicationConfig = {",
               "  providers: [",
@@ -232,7 +257,7 @@ function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined):
                 action: "create",
                 code: [
                   'import { inject, Injectable } from "@angular/core";',
-                  `import { ${usage.typeName} } from "./api-client";`,
+                  `import { ${usage.typeName} } from "${importPath}";`,
                   "",
                   '@Injectable({ providedIn: "root" })',
                   `export class ${exampleClass} {`,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MAX_SPEC_BYTES } from "@/lib/validation/limits";
 import type { SpecResult } from "./errors";
 import type { JsonObject } from "./json";
-import { parseSpecification } from "./parse";
+import { MAX_NESTING_DEPTH, parseSpecification } from "./parse";
 
 function spec(extra: JsonObject = {}): string {
   return JSON.stringify({
@@ -138,5 +138,26 @@ describe("parseSpecification", () => {
       }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("rejects documents nested deeper than the limit, with the location", () => {
+    const nested = `${"[".repeat(MAX_NESTING_DEPTH)}${"]".repeat(MAX_NESTING_DEPTH)}`;
+    const result = parseSpecification(`{"openapi":"3.0.3","x":${nested}}`);
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "too-deep",
+          message: `The specification is nested more than ${String(MAX_NESTING_DEPTH)} levels deep.`,
+          location: ["x", ...Array.from({ length: MAX_NESTING_DEPTH - 1 }, () => "0")].join(" › "),
+        },
+      ],
+    });
+  });
+
+  it("accepts nesting up to the limit", () => {
+    const depth = MAX_NESTING_DEPTH - 1;
+    const nested = `${"[".repeat(depth)}${"]".repeat(depth)}`;
+    expect(parseSpecification(`{"openapi":"3.0.3","x":${nested}}`).ok).toBe(true);
   });
 });

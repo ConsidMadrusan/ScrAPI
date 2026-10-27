@@ -51,6 +51,25 @@ describe("listOperations", () => {
     expect(operations.find((operation) => operation.id === id)?.requiresInput).toBe(expected);
   });
 
+  it("does not follow external or inherited references when checking for arguments", () => {
+    const spec: JsonObject = {
+      paths: {
+        "/x": {
+          get: {
+            parameters: [
+              { $ref: "other.json#/components/parameters/Id" },
+              { $ref: "#/components/parameters/constructor" },
+            ],
+            requestBody: { $ref: "other.json#/components/requestBodies/Body" },
+            responses: {},
+          },
+        },
+      },
+      components: { parameters: {} },
+    };
+    expect(listOperations(spec)[0]?.requiresInput).toBe(false);
+  });
+
   it("removes repeated tags on one operation", () => {
     const spec: JsonObject = {
       paths: { "/x": { get: { tags: ["a", "a", "b"], responses: {} } } },

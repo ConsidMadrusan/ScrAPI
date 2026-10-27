@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_REQUEST_BYTES } from "@/lib/validation/limits";
 import { validateResponseSchema } from "@/lib/validation/responses";
 import { POST } from "./route";
@@ -56,6 +56,29 @@ describe("POST /api/validate", () => {
   it("returns 400 when the body is not JSON", async () => {
     const response = await post("spec=1");
     expect(response.status).toBe(400);
+  });
+
+  it("returns a 500 failure response when reading the body fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error("client disconnected"));
+      },
+    });
+    const response = await POST(
+      new Request("http://localhost/api/validate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        duplex: "half",
+      } as RequestInit),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await readBody(response)).toEqual({
+      ok: false,
+      errors: [expect.objectContaining({ code: "internal" })],
+    });
   });
 
   it("returns 413 for an oversized body without reading it as JSON", async () => {
