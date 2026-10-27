@@ -1,0 +1,331 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Library API",
+    "version": "1.0.0",
+    "description": "Representative sample: tags, a multi-tag operation, missing and duplicate operationIds, same-path methods, composed schemas, enums, shared components, a reference cycle, and unused components."
+  },
+  "servers": [{ "url": "https://api.example.com/v1" }],
+  "tags": [
+    { "name": "books", "description": "Book catalogue" },
+    { "name": "authors", "description": "Authors" },
+    { "name": "admin", "description": "Administrative operations" },
+    { "name": "publishers", "description": "Not used by any operation" }
+  ],
+  "paths": {
+    "/books": {
+      "parameters": [{ "$ref": "#/components/parameters/PageSize" }],
+      "get": {
+        "tags": ["books"],
+        "operationId": "listBooks",
+        "summary": "List books",
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          {
+            "name": "genre",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/Genre" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of books",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Book" }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      },
+      "post": {
+        "tags": ["books", "admin"],
+        "operationId": "createBook",
+        "summary": "Create a book",
+        "security": [{ "apiKey": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/BookInput" },
+        "responses": {
+          "201": {
+            "description": "The created book",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Book" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/books/{bookId}": {
+      "parameters": [{ "$ref": "#/components/parameters/BookId" }],
+      "get": {
+        "tags": ["books"],
+        "summary": "Get a book (no operationId)",
+        "responses": {
+          "200": {
+            "description": "The book",
+            "headers": {
+              "X-Rate-Limit": { "$ref": "#/components/headers/RateLimit" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Book" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["admin"],
+        "operationId": "deleteBook",
+        "summary": "Delete a book",
+        "security": [{ "apiKey": [] }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/authors/{authorId}": {
+      "get": {
+        "tags": ["authors"],
+        "operationId": "getItem",
+        "summary": "Get an author (duplicate operationId)",
+        "parameters": [
+          {
+            "name": "authorId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The author",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Author" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reviews/{reviewId}": {
+      "get": {
+        "operationId": "getItem",
+        "summary": "Get a review (untagged, duplicate operationId)",
+        "parameters": [
+          {
+            "name": "reviewId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The review",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Review" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check (untagged, no operationId)",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "status": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Genre": {
+        "type": "string",
+        "enum": ["fiction", "non-fiction", "poetry"]
+      },
+      "MetadataValue": { "type": "string" },
+      "BookBase": {
+        "type": "object",
+        "required": ["title", "genre"],
+        "properties": {
+          "title": { "type": "string" },
+          "genre": { "$ref": "#/components/schemas/Genre" },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/components/schemas/MetadataValue" }
+          }
+        }
+      },
+      "Tag": {
+        "type": "object",
+        "required": ["name"],
+        "properties": { "name": { "type": "string" } }
+      },
+      "Book": {
+        "allOf": [
+          { "$ref": "#/components/schemas/BookBase" },
+          {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string" },
+              "author": { "$ref": "#/components/schemas/Author" },
+              "tags": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/Tag" }
+              }
+            }
+          }
+        ]
+      },
+      "NewBook": {
+        "allOf": [
+          { "$ref": "#/components/schemas/BookBase" },
+          {
+            "type": "object",
+            "required": ["authorId"],
+            "properties": { "authorId": { "type": "string" } }
+          }
+        ]
+      },
+      "Author": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "featuredBook": { "$ref": "#/components/schemas/Book" }
+        }
+      },
+      "Rating": {
+        "type": "integer",
+        "enum": [1, 2, 3, 4, 5]
+      },
+      "TextReview": {
+        "type": "object",
+        "required": ["kind", "text"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["text"] },
+          "text": { "type": "string" }
+        }
+      },
+      "RatingReview": {
+        "type": "object",
+        "required": ["kind", "rating"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["rating"] },
+          "rating": { "$ref": "#/components/schemas/Rating" }
+        }
+      },
+      "Review": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/TextReview" },
+          { "$ref": "#/components/schemas/RatingReview" }
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      },
+      "Publisher": {
+        "type": "object",
+        "description": "Not referenced by any operation.",
+        "properties": { "name": { "type": "string" } }
+      }
+    },
+    "parameters": {
+      "PageSize": {
+        "name": "pageSize",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "Page": {
+        "name": "page",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "integer", "minimum": 1 }
+      },
+      "BookId": {
+        "name": "bookId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      }
+    },
+    "requestBodies": {
+      "BookInput": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/NewBook" }
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Not found",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      }
+    },
+    "headers": {
+      "RateLimit": {
+        "description": "Requests left in the current window",
+        "schema": { "type": "integer" }
+      }
+    },
+    "securitySchemes": {
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      },
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Not used by any operation."
+      }
+    }
+  }
+}

@@ -1,0 +1,203 @@
+# Advisory AI code review of pull requests with Claude. This is development
+# tooling only; the ScrAPI application itself uses no AI.
+#
+# Three reviews run in parallel (architecture, security, code quality). Each
+# keeps one PR comment up to date. Prompts are read from the base branch so a
+# pull request cannot change its own review instructions. A prompt that is not
+# on the base branch yet is read from the pull request instead, and the comment
+# says so.
+#
+# When the reviews report findings at or above the fix threshold, ai-fix.yml
+# fixes them and opens a pull request into this pull request's branch. The
+# commit that merges such a fix pull request is not reviewed again.
+#
+# Requires the repository secret ANTHROPIC_API_KEY. Fork PRs and drafts are
+# skipped (forks do not receive secrets).
+name: AI code review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  gate:
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository && !startsWith(github.head_ref, 'ai-fix/') }}
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Skip commits that merged an AI fix pull request
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          merged_fixes="$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" \
+            --jq '[.[] | select((.head.ref | startswith("ai-fix/")) and .merged_at != null)] | length')"
+          if [ "${merged_fixes}" -gt 0 ]; then
+            echo "::notice::${HEAD_SHA} merged an AI fix pull request; skipping the review."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  review:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - review: architecture
+            title: Architecture
+          - review: security
+            title: Security
+          - review: quality
+            title: Code quality
+    concurrency:
+      group: ai-review-${{ github.event.pull_request.number }}-${{ matrix.review }}
+      cancel-in-progress: true
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Load review prompt from the base branch
+        id: prompt
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          REVIEW: ${{ matrix.review }}
+        run: |
+          prompt_file="${RUNNER_TEMP}/prompt.md"
+          rules_file="${RUNNER_TEMP}/rules.md"
+          if ! source="$(bash .github/ai-review/load-prompt.sh "${REVIEW}" "${prompt_file}")" \
+            || ! bash .github/ai-review/load-prompt.sh review-rules "${rules_file}" > /dev/null; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          delimiter="PROMPT_$(openssl rand -hex 16)"
+          {
+            echo "available=true"
+            echo "source=${source}"
+            echo "schema=$(jq -c . .github/ai-review/review-schema.json)"
+            echo "text<<${delimiter}"
+            cat "${rules_file}"
+            echo
+            echo "Review task:"
+            echo
+            cat "${prompt_file}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude review
+        id: claude
+        if: steps.prompt.outputs.available == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            BASE BRANCH: ${{ github.base_ref }}
+
+            You are reviewing a pull request. The PR branch is checked out in the working directory.
+            Get the changes with `gh pr diff ${{ github.event.pull_request.number }}`.
+
+            ${{ steps.prompt.outputs.text }}
+          claude_args: >-
+            --max-turns 60
+            --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --json-schema '${{ steps.prompt.outputs.schema }}'
+
+      - name: Post or update review comment
+        # Also runs when the review failed, so the PR always gets a comment.
+        # Skipped when a newer push cancelled this run.
+        if: ${{ !cancelled() && steps.prompt.outputs.available == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEW: ${{ matrix.review }}
+          TITLE: ${{ matrix.title }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PROMPT_SOURCE: ${{ steps.prompt.outputs.source }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Parsed with jq below: fromJSON() in an expression fails the whole
+          # workflow template when the output is empty.
+          STRUCTURED_OUTPUT: ${{ steps.claude.outputs.structured_output }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          marker="<!-- ai-review:${REVIEW} -->"
+          body_file="${RUNNER_TEMP}/ai-review-comment.md"
+          review_failed=false
+          {
+            echo "${marker}"
+            echo "### AI review: ${TITLE}"
+            echo
+            if printf '%s' "${STRUCTURED_OUTPUT}" | jq -e '.summary | type == "string"' > /dev/null 2>&1; then
+              printf '%s' "${STRUCTURED_OUTPUT}" | jq -r '
+                .summary, "",
+                if (.findings | length) == 0 then "No issues found."
+                else .findings[] | "- **\(.severity)** `\(.file)\(if .line then ":\(.line)" else "" end)`: \(.problem) *Fix:* \(.fix)"
+                end'
+            else
+              review_failed=true
+              # The execution file ends with a "result" message whose subtype says
+              # why the run stopped (for example error_max_turns). Only that status
+              # is read, never the conversation content.
+              reason="unknown reason"
+              if [ -n "${EXECUTION_FILE}" ] && [ -f "${EXECUTION_FILE}" ]; then
+                reason="$(jq -r '[.[] | select(.type == "result")] | last
+                  | if . == null then "no result" else "\(.subtype // "unknown") after \(.num_turns // "?") turns" end' \
+                  "${EXECUTION_FILE}" 2>/dev/null || echo "unreadable execution file")"
+              fi
+              echo "::error::The ${REVIEW} review returned no result (${reason})." >&2
+              echo "Review failed (\`${reason}\`). [See the run](${RUN_URL})."
+            fi
+            echo
+            note=""
+            [ "${PROMPT_SOURCE}" = "pr" ] && note=" · prompt from this PR"
+            echo "<sub>Commit ${HEAD_SHA:0:7}${note}</sub>"
+          } > "${body_file}"
+          bash .github/ai-review/upsert-comment.sh "${marker}" "${body_file}"
+
+          if [ "${review_failed}" = true ]; then
+            exit 1
+          fi
+          # Saved for ai-fix.yml, which fixes the findings.
+          mkdir -p "${RUNNER_TEMP}/review-result"
+          printf '%s' "${STRUCTURED_OUTPUT}" > "${RUNNER_TEMP}/review-result/review-${REVIEW}.json"
+
+      - name: Save review result for the fix workflow
+        if: ${{ !cancelled() && steps.prompt.outputs.available == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-review-${{ matrix.review }}
+          path: ${{ runner.temp }}/review-result/
+          if-no-files-found: ignore
+          retention-days: 1
+
+  fix:
+    needs: [gate, review]
+    # Runs even when one review failed, using the results that exist.
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.gate.outputs.skip != 'true' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/ai-fix.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      base_ref: ${{ github.base_ref }}
+      head_ref: ${{ github.head_ref }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

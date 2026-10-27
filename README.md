@@ -2,7 +2,7 @@
 
 Generate typed API clients from OpenAPI specifications, choose exactly which endpoints you need, and get a step-by-step guide for adding the code to your existing project.
 
-> **Status: documentation/planning stage.** The application is **not implemented yet**. This README describes the planned product, scope, and architecture. There is nothing to install or run, and no installation or run instructions exist yet. They will be added once implementation establishes them.
+> **Status: MVP complete, not yet released.** The full workflow works: validate a specification, choose a target, select operations, generate code, download a ZIP, and follow the integration guide. The Docker image builds and runs. No version has been tagged or published yet.
 
 ## The problem
 
@@ -10,7 +10,7 @@ Consuming an HTTP API usually means writing the same code by hand: DTOs, enums, 
 
 ScrAPI wraps existing deterministic generators in a focused workflow: pick the endpoints you need, generate typed integration code for your target, and add it to your project with clear, accurate instructions.
 
-## Planned user workflow
+## User workflow
 
 1. **Provide a specification**: paste OpenAPI JSON or upload a `.json` file.
 2. **Validate**: ScrAPI checks that the input is well-formed JSON, a supported OpenAPI version (3.0.x), valid according to the OpenAPI standard, and self-contained. Errors are reported in plain language.
@@ -47,7 +47,16 @@ The original specification is preserved. ScrAPI filters a separate copy and keep
 | TypeScript for Nuxt/Vue | Same framework-independent TypeScript client | Same as above | Placement in a supported Nuxt layout, configuration, calling a selected method |
 | TypeScript for Angular | Angular client/service structure | Models, enums, injectable API services, configuration | Placement in a supported Angular layout, registering HTTP/client providers, injecting and calling a service |
 
-Exact generators, options, supported framework versions, and folder layouts are decided and verified during implementation. ScrAPI will only advertise what has been tested.
+Verified setups (OpenAPI Generator 7.26.0). Each guide documents one supported project layout:
+
+| Target | Generator | Files go to | Verified by following the guide in |
+| --- | --- | --- | --- |
+| Next.js/React | `typescript-axios` or `typescript-fetch` (you choose the HTTP client) | `src/lib/api-client/` | A `create-next-app` project (Next.js 16.4, App Router, `src/`): `tsc` and `next build` |
+| Nuxt/Vue | Same as Next.js | `app/lib/api-client/` | A `nuxi init` project (Nuxt 4.6): `nuxi typecheck` (vue-tsc, TypeScript 6) and `nuxt build` |
+| Angular | `typescript-angular` | `src/app/api-client/` | An `ng new` standalone app (Angular 22.2): `ng build` |
+| C#/.NET | `csharp` (`generichost`, `net10.0`) | `src/ApiClient/` next to your solution | A `dotnet new webapi` project (.NET 10): `dotnet build` |
+
+Other framework versions or layouts may work but have not been tested.
 
 ScrAPI does **not** generate UI, React hooks, Vue composables, framework-specific SSR integrations, complete app scaffolds, databases, or business logic.
 
@@ -135,7 +144,7 @@ There are two different kinds of validation:
 
 Client-side checks give fast feedback. Server-side validation is authoritative, and submitted operation selections are always revalidated against the specification on the server.
 
-## Proposed architecture
+## Architecture
 
 A single Next.js application with clearly separated responsibilities:
 
@@ -152,7 +161,7 @@ Operations are identified by HTTP method and path, never only by `operationId`, 
 
 ## Generator runtime and deployment
 
-ScrAPI is one Next.js codebase with no Java code of its own. OpenAPI Generator, however, is written in Java. ScrAPI installs it through the npm CLI `@openapitools/openapi-generator-cli`, a Node.js wrapper that downloads the generator's JAR file and runs it with `java`. Installing through npm does **not** remove the need for Java: **a Java runtime must be present wherever generation runs.** That affects deployment:
+ScrAPI is one Next.js codebase with no Java code of its own. OpenAPI Generator, however, is written in Java. ScrAPI uses the npm CLI `@openapitools/openapi-generator-cli` at build time to download the pinned generator JAR. At request time the server runs that JAR directly with `java`. Installing through npm does **not** remove the need for Java: **a Java runtime must be present wherever generation runs.** That affects deployment:
 
 - Generation must run in the Node.js server runtime, **not** an Edge runtime.
 - ScrAPI is therefore shipped as a **Docker image** that bundles Node.js, a Java runtime, the generator, and the built app. Running that container is the only supported deployment.
@@ -163,35 +172,44 @@ ScrAPI is one Next.js codebase with no Java code of its own. OpenAPI Generator, 
 
 ## Self-hosting with Docker
 
-> **Planned.** No `Dockerfile` exists and no image has been published yet. The steps below describe how self-hosting is intended to work. The exact port, environment variables, and resource recommendations will be documented here once the implementation defines them. None exist yet.
+ScrAPI runs as one container: the Next.js server, a Java 21 runtime, and the pinned OpenAPI Generator JAR. The image runs as the non-root `node` user, listens on port `3000`, and stores nothing after a request completes, so it needs no volumes.
 
-### Use a published image
+### Run a published image
 
-Release images will be published to GitHub Container Registry as:
+Release images are published to GitHub Container Registry as `ghcr.io/considmadrusan/scrapi`. Each release `vX.Y.Z` is tagged `X.Y.Z`, `X.Y`, and `latest`. Pin a specific version in production rather than using `latest`.
 
+```sh
+docker run --init --read-only --tmpfs /tmp --memory 512m -p 3000:3000 ghcr.io/considmadrusan/scrapi:X.Y.Z
 ```
-ghcr.io/considmadrusan/scrapi
-```
 
-Each release `vX.Y.Z` is tagged `X.Y.Z`, `X.Y`, and `latest`. Pin a specific version in production rather than using `latest`.
+Then open http://localhost:3000.
 
-Running it will follow the usual Docker pattern: pull the image, then run one container that publishes the app's HTTP port. Recommended options:
+- `--init` forwards shutdown signals to the server, so `docker stop` ends it immediately.
+- `--read-only --tmpfs /tmp`: ScrAPI writes only per-request temporary folders under `/tmp`, and removes them after each generation.
+- `--memory 512m`: a container that generated every target from the sample specifications peaked at about 230 MB, including the JVM. ScrAPI runs one generator JVM at a time with a 256 MB heap cap, so a very large specification fails with an error instead of exceeding this limit; further generation requests get a "busy" error until it finishes.
+- The container needs no outbound network access. The generator is part of the image and nothing is downloaded at runtime.
 
-- `--init`, so the server receives shutdown signals cleanly.
-- `--read-only` with a tmpfs mounted on `/tmp`. ScrAPI writes nothing permanent, and generation only needs temporary space.
-- A memory limit that leaves room for the JVM used by the generator.
-
-The image runs as a non-root user and stores no specifications or generated files after a request completes, so it needs no volumes.
+| Environment variable | Default in the image | Purpose |
+| --- | --- | --- |
+| `PORT` | `3000` | Port the server listens on. |
+| `HOSTNAME` | `0.0.0.0` | Address the server binds to. |
 
 New GHCR packages are private by default. To allow anonymous `docker pull`, the repository owner must make the package public in its GitHub package settings.
 
 ### Build the image yourself
 
-Once a `Dockerfile` exists, the image can be built from the repository root with a standard `docker build`. No build arguments or secrets are planned.
+From the repository root:
+
+```sh
+docker build -t scrapi .
+docker run --init --read-only --tmpfs /tmp --memory 512m -p 3000:3000 scrapi
+```
+
+No build arguments or secrets are needed. The build downloads npm packages, the generator JAR (from Maven Central, at the version in `openapitools.json`), the Debian Java runtime package, and the Google fonts used by the page.
 
 ### Release process
 
-Images are published by `.github/workflows/release-image.yml`. Pushing a tag like `v1.2.3` builds the image from the root `Dockerfile` and pushes it to `ghcr.io` using the repository's built-in `GITHUB_TOKEN`. There is one workflow with no extra secrets, and only `linux/amd64` images are built. Until a `Dockerfile` exists, the workflow will fail if a tag is pushed.
+Images are published by `.github/workflows/release-image.yml`. Pushing a tag like `v1.2.3` builds the image from the root `Dockerfile` and pushes it to `ghcr.io` using the repository's built-in `GITHUB_TOKEN`. There is one release workflow with no extra secrets, and only `linux/amd64` images are built.
 
 ## Input handling and temporary files
 
@@ -229,22 +247,22 @@ Optional polish that can be deferred if time runs short (without dropping requir
 
 ## Acceptance criteria (completed MVP)
 
-- [ ] Each advertised target generates successfully and produces usable typed output.
-- [ ] Generated output compiles in representative sample projects for each target.
-- [ ] Clear errors for malformed JSON, invalid specifications, unsupported versions, unsupported external references, and invalid generation options.
-- [ ] Individual, group, and select-all/clear-all operation selection work with consistent counts, including operations with several tags.
-- [ ] Methods sharing a path (e.g. `GET /users` and `POST /users`) can be selected independently.
-- [ ] Methods for unselected operations are absent from generated clients.
-- [ ] Required transitive schemas and shared dependencies are included.
-- [ ] Internal references still resolve after filtering.
-- [ ] The ZIP has the correct folder structure.
-- [ ] File contents in the ZIP and the guide match.
-- [ ] Guide paths, dependency instructions, and usage examples are accurate.
-- [ ] A developer can integrate the output by following the guide in each supported sample project.
-- [ ] Temporary files are cleaned up after both successful and failed generation.
-- [ ] The application's generation workflow has no AI dependency.
-- [ ] The Docker image builds from the repository root, runs as a non-root user, and generates output for every target inside the container.
-- [ ] Pushing a version tag publishes the image to `ghcr.io` through the release workflow.
+- [x] Each advertised target generates successfully and produces usable typed output.
+- [x] Generated output compiles in representative sample projects for each target.
+- [x] Clear errors for malformed JSON, invalid specifications, unsupported versions, unsupported external references, and invalid generation options.
+- [x] Individual, group, and select-all/clear-all operation selection work with consistent counts, including operations with several tags.
+- [x] Methods sharing a path (e.g. `GET /users` and `POST /users`) can be selected independently.
+- [x] Methods for unselected operations are absent from generated clients.
+- [x] Required transitive schemas and shared dependencies are included.
+- [x] Internal references still resolve after filtering.
+- [x] The ZIP has the correct folder structure.
+- [x] File contents in the ZIP and the guide match.
+- [x] Guide paths, dependency instructions, and usage examples are accurate.
+- [x] A developer can integrate the output by following the guide in each supported sample project.
+- [x] Temporary files are cleaned up after both successful and failed generation.
+- [x] The application's generation workflow has no AI dependency.
+- [x] The Docker image builds from the repository root, runs as a non-root user, and generates output for every target inside the container.
+- [ ] Pushing a version tag publishes the image to `ghcr.io` through the release workflow. (Not yet verified: no tag has been pushed.)
 
 ## Deferred features
 
@@ -258,6 +276,21 @@ Optional polish that can be deferred if time runs short (without dropping requir
 - VS Code extension, Git integration, and direct project import.
 - An interactive tutorial engine.
 
-## Getting started
+## Development
 
-Not available yet. Development instructions and exact Docker run commands will be added once the implementation establishes the actual tooling, scripts, and runtime requirements. Development will use the Next.js dev server locally, which also needs a Java runtime for generation. Running ScrAPI outside development uses the Docker image (see [Self-hosting with Docker](#self-hosting-with-docker)).
+Requirements: Node.js (version in `.nvmrc`) and, for running the generator, a Java runtime (Java 11 or newer; verified with 17 and 21).
+
+```sh
+npm ci                    # install dependencies from the lockfile
+npm run setup:generator   # download the pinned OpenAPI Generator JAR once
+npm run dev               # start the Next.js dev server
+npm run check             # lint, typecheck, and tests (same as CI)
+```
+
+`npm run dev` serves the full workflow. Generation runs the downloaded JAR with `java`, so `java` must be on your `PATH`. Running ScrAPI outside development uses the Docker image (see [Self-hosting with Docker](#self-hosting-with-docker)). Check changes in the container before a release.
+
+### Pull request checks
+
+- **CI** (`.github/workflows/ci.yml`) runs `npm run check` on every pull request and on pushes to `main`.
+- **AI code review** (`.github/workflows/ai-review.yml`) posts three advisory review comments (architecture, security, code quality) on pull requests and updates them on each push. It uses Claude through `anthropics/claude-code-action` and is development tooling only; the application itself uses no AI. Setup: add the repository secret `ANTHROPIC_API_KEY`. Drafts and pull requests from forks are skipped. The review prompts live in `.github/ai-review/` and are read from the base branch, so changes to them take effect after they are merged. Until a prompt exists on the base branch, the pull request's own copy is used and the review comment notes this.
+- **AI review fixes** (`.github/workflows/ai-fix.yml`, called by the AI code review) fix review findings of `medium` severity or higher. Claude fixes them, the three reviews run again, and this repeats for at most five rounds. The result is opened as a pull request into the reviewed pull request's branch, with each change and the reason for it. A fix that fails `npm run check` is opened as a draft. Merging the fix pull request does not start a new AI review. Pull requests opened by GitHub Actions do not start other workflows, so CI runs on the original pull request after the merge. Setup: enable **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**.

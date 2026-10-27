@@ -4,7 +4,24 @@ Guidance for coding agents working in this repository. Read this file and `READM
 
 ## Current status
 
-The repository is at the **documentation/planning stage**. No application code, Dockerfile, or dependencies exist yet. The only automation is the image release workflow in `.github/workflows/release-image.yml`, which will fail until a root `Dockerfile` exists. Do not assume any script, command, folder, or package is present until you have verified it. Do not start implementation unless the user asks for it.
+The **MVP is implemented** (all four phases). Release is pending: no version tag has been pushed. The repository contains:
+
+- The full flow from specification input to ZIP download:
+  - validation (`src/lib/openapi/`)
+  - operation listing, grouping, and filtering (`src/lib/selection/`)
+  - target configuration (`src/lib/targets/`)
+  - generation (`src/lib/generation/`)
+  - ZIP building (`src/lib/archive/`)
+  - the `/api/validate`, `/api/generate`, and `/api/archive` (ZIP response built on the server from the generation result) Route Handlers
+  - the workflow UI (`src/components/workflow/`)
+- Integration guides: deterministic templates in `src/lib/guides/`, rendered in the UI (`src/components/guide/`) and as `INTEGRATION.md` in the ZIP, both from the same generation result.
+- The `typescript-fetch` template override in `generator-templates/`.
+- Sample specifications in `samples/specs/`, and shared test fixtures in `src/test/`.
+- The root `Dockerfile` and `.dockerignore`, and the CI, AI review, AI fix, and release workflows in `.github/workflows/`.
+
+Do not assume any other script, command, folder, or package is present until you have verified it.
+
+This project uses **Next.js 16**, which differs from older versions. Read `AGENTS.md` and the bundled docs in `node_modules/next/dist/docs/` before writing Next.js code. For example, with `cacheComponents` enabled, route files must not export `runtime` (Node.js is the default and only supported runtime).
 
 ## Project purpose
 
@@ -41,7 +58,33 @@ ScrAPI generates API integration code only: no UI, databases, or business logic.
 
 ### Generated output targets (what ScrAPI produces)
 
-These are **outputs**, not parts of ScrAPI's own stack: C#/.NET, framework-independent TypeScript (shared by Next.js/React and Nuxt/Vue, with different usage instructions), and an Angular client/service structure. Specific OpenAPI Generator generators and options for each target must be chosen and verified during the first implementation spike; do not assume them.
+These are **outputs**, not parts of ScrAPI's own stack: C#/.NET, framework-independent TypeScript (shared by Next.js/React and Nuxt/Vue, with different usage instructions), and an Angular client/service structure.
+
+Verified in the Phase 1 spike with OpenAPI Generator 7.26.0:
+
+| Target | Generator | Verified against |
+| --- | --- | --- |
+| C#/.NET | `csharp`, library `generichost`, `nullableReferenceTypes=true` | `dotnet build` with .NET 10 (`net10.0`), no warnings |
+| TypeScript for Next.js/React and Nuxt/Vue: HTTP client chosen by the user | `typescript-axios` (default; `supportsES6`, `withSeparateModelsAndApi`, `apiPackage=api`, `modelPackage=model`) or `typescript-fetch` (`supportsES6`, plus the `runtime.ts` override in `generator-templates/typescript-fetch/`) | `tsc` with Next.js 16 defaults and with Nuxt 4.6 defaults, for both clients. Without the override, `typescript-fetch` fails Nuxt's `noUncheckedIndexedAccess` and `noImplicitOverride`. When the pinned generator version changes, re-check the override against the new upstream template. |
+| TypeScript for Angular | `typescript-angular` (`ngVersion` default 22.0.0) | `tsc` 6.0 with Angular 22 strict workspace defaults |
+
+Rules for preparing generator input:
+
+- The generator rejects duplicate `operationId`s. ScrAPI rejects such specifications during validation with a clear error.
+- Operations with several tags produce duplicate exports in TypeScript output. The generator's copy of the specification keeps only each operation's **first** tag, and the guide reflects that class placement. The original specification is unchanged.
+
+Supported destination layouts (the paths are set in `src/lib/targets/config.ts`):
+
+| Target | ZIP folder | Project destination |
+| --- | --- | --- |
+| Next.js (App Router, `src/` directory) | `api-client/` | `src/lib/api-client/` |
+| Nuxt 4 (`app/` directory) | `api-client/` | `app/lib/api-client/` |
+| Angular (Angular CLI workspace) | `api-client/` | `src/app/api-client/` |
+| C#/.NET | `ApiClient/` (`ApiClient.csproj`, namespace `ApiClient`) | `src/ApiClient/`, next to the solution |
+
+Only the client source files are kept. Generator scaffolding (READMEs, docs, tests, solution files, CI files, `git_push.sh`, `.openapi-generator/`) is left out.
+
+Do not claim other generators, options, or framework versions without verifying them the same way.
 
 ### Zod vs. OpenAPI validation
 
@@ -99,6 +142,33 @@ Rules:
 
 Describe and respect these boundaries; do not pre-create folders or files that are not needed for the current task.
 
+## Code standard and tests
+
+The code standard is enforced by tooling. Run `npm run check` (lint, typecheck, tests) before committing; CI runs the same command.
+
+| Script | What it does |
+| --- | --- |
+| `npm run lint` | ESLint with zero warnings allowed (`eslint.config.mjs`). |
+| `npm run typecheck` | `next typegen` + `tsc --noEmit`. |
+| `npm run test` / `npm run test:watch` | Vitest unit and component tests. |
+| `npm run check` | All of the above, in order. |
+| `npm run setup:generator` | Downloads the pinned OpenAPI Generator JAR (once per machine). |
+
+- **ESLint:**
+  - The Next.js `core-web-vitals` and `typescript` configs, plus `typescript-eslint` `strictTypeChecked` and `stylisticTypeChecked`.
+  - No `any`, no non-null assertions (`!`), and type-only imports via `import type`.
+  - No floating or misused promises, and exhaustive `switch` statements.
+  - `no-console` everywhere, except `console.warn` and `console.error` in `src/lib/**` and `src/app/api/**`. Never log content.
+  - `src/components/**` and `src/app/**/page.tsx` must not import filesystem or child-process modules, `@/lib/generation`, or `@/lib/openapi/validate`.
+- **TypeScript:** `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`.
+- **Tests:**
+  - Tests live next to the code they cover as `*.test.ts` or `*.test.tsx`.
+  - Library code runs in the `node` environment. Component tests start with `// @vitest-environment jsdom` and use Testing Library with `user-event`, querying by role and accessible name.
+  - Test fixtures come from `samples/specs/`.
+  - Each phase adds tests for the code it introduces, and those tests must pass before the phase is complete.
+- **Node.js:** use the version in `.nvmrc`. CI and the Docker image use the same version.
+- **Lockfile:** `npm install <pkg>` with an existing lockfile has been seen to drop other platforms' optional binaries (npm/cli#4828), for example `@rolldown/binding-*` or `fsevents`. That breaks `npm ci` in CI. After adding a dependency, check that `grep -c '"node_modules/@rolldown/binding-' package-lock.json` is not 0. If it is, regenerate the lockfile: `rm -rf node_modules package-lock.json && npm install`, then `npm run setup:generator`.
+
 ## Runtime and deployment
 
 - OpenAPI Generator is written in Java. ScrAPI uses it through the npm CLI `@openapitools/openapi-generator-cli`, which downloads the generator JAR and runs it with `java`. ScrAPI contains no Java code. Java is a runtime dependency of the single Next.js application, not a separate backend.
@@ -108,8 +178,8 @@ Describe and respect these boundaries; do not pre-create folders or files that a
   - Install the CLI as a regular dependency, recorded in `package.json` and the lockfile. Never run it through `npx` or `npm exec`, which can download packages on demand.
   - Pin the OpenAPI Generator version in the CLI's committed `openapitools.json` configuration. Do not rely on the CLI's default "latest" behavior, and do not invent a version. Choose and verify one during the spike.
   - Download the pinned JAR at Docker build time (and once locally during development setup). Nothing may be downloaded at request time. Treat a missing JAR at runtime as a configuration error, not a reason to fetch it.
-  - Invoke the CLI from server code as a child process with fixed arguments and no shell, as described under Architecture principles.
-  - Next.js standalone output does not trace a CLI that is only started as a child process, so copy the CLI package and the downloaded JAR into the runtime image explicitly.
+  - The npm CLI is a **build-time tool only**: it downloads the pinned JAR (`npm run setup:generator`, and in the Docker build stage). At request time, server code runs the JAR directly as `java -jar <pinned jar> generate …`. It runs as a child process with fixed arguments and no shell, as described under Architecture principles. This keeps the CLI's dependencies, which `npm audit` flags in its download code, out of the runtime image.
+  - Next.js standalone output does not trace the JAR, so copy the pinned JAR into the runtime image explicitly. The CLI package is not needed at runtime.
 - The container host must provide enough memory for the JVM, writable temporary storage, and enough request time for generation. Verify this early.
 
 ## Docker rules
@@ -131,7 +201,15 @@ Image:
 
 Pipeline:
 
-- The release pipeline is **one** workflow: `.github/workflows/release-image.yml`. It builds and pushes the image to `ghcr.io/<owner>/<repo>` when a `vX.Y.Z` tag is pushed, tagging `X.Y.Z`, `X.Y`, and `latest`.
+There are exactly four workflows. Do not add others without user approval.
+
+- `.github/workflows/ci.yml` runs `npm run check` on pull requests and on pushes to `main`. It needs no Java, Docker, or secrets.
+- `.github/workflows/ai-review.yml` runs an advisory Claude code review on pull requests. It runs three parallel reviews (architecture, security, code quality), using prompts in `.github/ai-review/` that are read from the base branch (or from the pull request, with a note in the comment, while a prompt is not on the base branch yet). Each review keeps one PR comment up to date and also returns its findings as structured data. It skips the commit that merges an AI fix pull request. It is development tooling, not part of the application. Together with `ai-fix.yml`, it is the only workflow allowed to use a secret beyond `GITHUB_TOKEN`: the repository secret `ANTHROPIC_API_KEY`. The reviewers get read-only tools, and a plain shell step posts the comment.
+- `.github/workflows/ai-fix.yml` is a reusable workflow that `ai-review.yml` calls after its reviews. When they report findings at or above `FIX_MIN_SEVERITY` (default `medium`), Claude fixes them and the three reviews run again on the result, for at most five rounds (`.github/ai-review/fix-loop.sh`). The fixes are opened as a pull request into the reviewed pull request's branch, explaining what changed and why. The fixer may only edit files and run `npm run` check scripts; its changes to `.github/`, `docs/`, `package.json`, and `package-lock.json` are discarded, and the workflow, not Claude, commits and pushes. It is development tooling, not part of the application.
+- `.github/workflows/release-image.yml` is the release pipeline. It builds and pushes the image to `ghcr.io/<owner>/<repo>` when a `vX.Y.Z` tag is pushed, tagging `X.Y.Z`, `X.Y`, and `latest`.
+
+Rules for the release workflow:
+
 - It authenticates with the built-in `GITHUB_TOKEN` and minimal permissions (`contents: read`, `packages: write`). Do not add personal access tokens or other secrets.
 - Keep it to checkout, Buildx setup, registry login, metadata, and build-and-push. Do not add extra jobs, registries, platforms (it builds `linux/amd64` only), signing, scanning, or deployment steps without user approval. Propose them instead.
 - Use official `actions/*` and `docker/*` actions only, on major-version tags. Pinning to commit SHAs is a recommended hardening step, but only with SHAs that have been verified, never guessed.
@@ -139,10 +217,17 @@ Pipeline:
 
 ## Things you must not do
 
-- Add AI features or AI/LLM API dependencies.
+- Add AI features or AI/LLM API dependencies to the application or its generation workflow. (The PR review workflow is development tooling and is allowed.)
 - Add a database, authentication, billing, or unrelated features.
 - Replace the chosen stack or introduce a separate backend (Express, Python, .NET, etc.).
-- Add external dependencies without first explaining the need and getting user approval. Already approved: the technologies named above (Next.js, TypeScript, Tailwind CSS, shadcn/ui, Motion for React, Zod, optional Zustand) and OpenAPI Generator through the npm CLI `@openapitools/openapi-generator-cli`, plus a Java runtime in the Docker image. Everything else (e.g. an OpenAPI validator package, a ZIP library, a syntax highlighter) requires approval.
+- Add external dependencies without first explaining the need and getting user approval. Already approved: the technologies named above (Next.js, TypeScript, Tailwind CSS, shadcn/ui, Motion for React, Zod, optional Zustand) and OpenAPI Generator through the npm CLI `@openapitools/openapi-generator-cli`, plus a Java runtime in the Docker image. Also approved:
+  - The OpenAPI validator `@apidevtools/swagger-parser`.
+  - `server-only`, which marks server modules.
+  - A ZIP library (`jszip`, not yet installed).
+  - The packages shadcn/ui installs for its components.
+  - The dev tools Vitest, `@vitejs/plugin-react`, `jsdom`, Testing Library (`react`, `dom`, `user-event`, `jest-dom`), and `typescript-eslint`.
+
+  Everything else (e.g. a syntax highlighter) requires approval.
 - Build a custom code-generation engine when an existing generator can satisfy the requirement.
 - Claim support for untested frameworks, versions, specification features, or deployment environments.
 - Use `any` to bypass typing problems. Represent genuinely unconstrained data honestly (e.g. `unknown`) and narrow it.
