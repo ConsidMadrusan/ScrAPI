@@ -35,7 +35,7 @@ const run = {
 describe("generatorArguments", () => {
   it("builds a fixed argument list from target settings", () => {
     expect(generatorArguments(run, "/app/gen.jar")).toEqual([
-      "-Xmx1g",
+      "-Xmx256m",
       "-XX:-UsePerfData",
       "-jar",
       "/app/gen.jar",

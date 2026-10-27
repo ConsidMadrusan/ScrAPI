@@ -1,18 +1,34 @@
-import { buildResultZip } from "@/lib/archive/result-zip";
-import { isSafeArchivePath } from "@/lib/archive/safe-path";
+import { buildResultZip, checkArchivable } from "@/lib/archive/result-zip";
 import { renderGuide } from "@/lib/guides/render";
-import { MAX_ARCHIVE_REQUEST_BYTES } from "@/lib/validation/limits";
+import { MAX_ARCHIVE_REQUEST_BYTES, MAX_CONCURRENT_ARCHIVES } from "@/lib/validation/limits";
 import { problemsFromZod, type Problem } from "@/lib/validation/problems";
 import { readJsonBody } from "@/lib/validation/read-request";
 import { generateSuccessSchema, type FailureResponse } from "@/lib/validation/responses";
 
-const SAFE_FILE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
+/** Process-wide resource counter (not request state): ZIP requests in progress. */
+let runningArchives = 0;
 
 /**
  * Builds the ZIP for a generation result on the server. The guide inside it is
- * rendered from the same result the page shows. Unsafe archive paths are rejected.
+ * rendered from the same result the page shows. Results that generation could
+ * not have produced (unsafe paths, other roots, over the output limits) are
+ * rejected, and at most MAX_CONCURRENT_ARCHIVES requests are handled at once.
  */
 export async function POST(request: Request): Promise<Response> {
+  if (runningArchives >= MAX_CONCURRENT_ARCHIVES) {
+    return failure(503, [
+      { code: "archive-busy", message: "The server is busy creating other ZIP files. Try again in a moment." },
+    ]);
+  }
+  runningArchives += 1;
+  try {
+    return await archive(request);
+  } finally {
+    runningArchives -= 1;
+  }
+}
+
+async function archive(request: Request): Promise<Response> {
   const body = await readJsonBody(request, MAX_ARCHIVE_REQUEST_BYTES);
   if (!body.ok) return failure(body.status, [body.problem]);
 
@@ -20,11 +36,8 @@ export async function POST(request: Request): Promise<Response> {
   if (!input.success) return failure(400, problemsFromZod(input.error));
   const result = input.data;
 
-  if (!result.files.every((file) => isSafeArchivePath(file.archivePath))) {
-    return failure(422, [
-      { code: "unsafe-archive-path", message: "The result contains a file path that cannot be archived." },
-    ]);
-  }
+  const rejection = checkArchivable(result);
+  if (rejection !== undefined) return failure(rejection.status, [rejection.problem]);
 
   let zip: Uint8Array;
   try {
@@ -35,11 +48,11 @@ export async function POST(request: Request): Promise<Response> {
     return failure(500, [{ code: "internal", message: "The ZIP file could not be created. Try again." }]);
   }
 
-  const fileName = SAFE_FILE_NAME.test(result.archiveRoot) ? result.archiveRoot : "api-client";
+  // checkArchivable ensured the root comes from target configuration.
   return new Response(zip.slice().buffer, {
     headers: {
       "content-type": "application/zip",
-      "content-disposition": `attachment; filename="${fileName}.zip"`,
+      "content-disposition": `attachment; filename="${result.archiveRoot}.zip"`,
       "cache-control": "no-store",
     },
   });

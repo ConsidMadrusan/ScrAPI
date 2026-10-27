@@ -10,11 +10,15 @@ import generatorConfig from "../../../openapitools.json";
 /** Generation normally takes about a second; this allows for large specifications. */
 export const GENERATION_TIMEOUT_MS = 60_000;
 
-/** Most generator JVMs that may run at once; further requests are rejected as busy. */
-export const MAX_CONCURRENT_GENERATIONS = 2;
+/**
+ * Most generator JVMs that may run at once; further requests are rejected as busy.
+ * Together with JVM_MAX_HEAP this keeps the server within the 512 MB container
+ * memory documented in README.md.
+ */
+export const MAX_CONCURRENT_GENERATIONS = 1;
 
-/** Fixed heap cap per generator JVM, so concurrent runs cannot exhaust server memory. */
-export const JVM_MAX_HEAP = "-Xmx1g";
+/** Fixed heap cap per generator JVM, so a large run fails cleanly instead of exhausting container memory. */
+export const JVM_MAX_HEAP = "-Xmx256m";
 
 /** Process-wide resource counter (not request state): JVMs currently running. */
 let runningGenerators = 0;

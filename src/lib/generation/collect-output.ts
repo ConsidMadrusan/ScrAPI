@@ -4,10 +4,10 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { isSafeArchivePath } from "@/lib/archive/safe-path";
 import { toArchivePath, toDestinationPath, type TargetConfig } from "@/lib/targets/config";
+import { MAX_OUTPUT_BYTES, MAX_OUTPUT_FILES } from "@/lib/validation/limits";
 import type { GeneratedFile } from "@/lib/validation/responses";
 
-export const MAX_OUTPUT_FILES = 2_000;
-export const MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
+export { MAX_OUTPUT_BYTES, MAX_OUTPUT_FILES };
 
 export class OutputLimitError extends Error {
   override name = "OutputLimitError";
