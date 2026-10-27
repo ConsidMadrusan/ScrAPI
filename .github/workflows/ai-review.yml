@@ -23,7 +23,7 @@ jobs:
   review:
     if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -99,7 +99,7 @@ jobs:
 
             ${{ steps.prompt.outputs.text }}
           claude_args: >-
-            --max-turns 30
+            --max-turns 60
             --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*)"
             --json-schema '{"type":"object","properties":{"review":{"type":"string"}},"required":["review"],"additionalProperties":false}'
 
@@ -119,13 +119,24 @@ jobs:
           # Parsed with jq below: fromJSON() in an expression fails the whole
           # workflow template when the output is empty.
           STRUCTURED_OUTPUT: ${{ steps.claude.outputs.structured_output }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           REVIEW_TEXT="$(printf '%s' "${STRUCTURED_OUTPUT}" | jq -r '.review // empty' 2>/dev/null || true)"
           review_failed=false
           if [ -z "${REVIEW_TEXT}" ]; then
             review_failed=true
-            echo "::error::Claude returned no review text for ${REVIEW}."
-            REVIEW_TEXT="> **The ${TITLE} review did not complete** for this commit. See the workflow run for details: ${RUN_URL}"
+            # The execution file ends with a "result" message whose subtype says
+            # why the run stopped (for example error_max_turns). Only that status
+            # is read, never the conversation content.
+            reason="unknown reason"
+            if [ -n "${EXECUTION_FILE}" ] && [ -f "${EXECUTION_FILE}" ]; then
+              reason="$(jq -r '[.[] | select(.type == "result")] | last
+                | if . == null then "no result message"
+                  else "\(.subtype // "unknown") after \(.num_turns // "?") turns" end' \
+                "${EXECUTION_FILE}" 2>/dev/null || echo "unreadable execution file")"
+            fi
+            echo "::error::Claude returned no review text for ${REVIEW} (${reason})."
+            REVIEW_TEXT="> **The ${TITLE} review did not complete** for this commit (\`${reason}\`). See the workflow run for details: ${RUN_URL}"
           fi
 
           marker="<!-- ai-review:${REVIEW} -->"
