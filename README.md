@@ -2,7 +2,7 @@
 
 Generate typed API clients from OpenAPI specifications, choose exactly which endpoints you need, and get a step-by-step guide for adding the code to your existing project.
 
-> **Status: documentation/planning stage.** The application is **not implemented yet**. This README describes the planned product, scope, and architecture. There is nothing to install or run, and no installation or run instructions exist yet. They will be added once implementation establishes them.
+> **Status: early implementation (Phase 1).** The application is **not usable yet**. The project scaffold, code standard, tests, and CI exist; the generation workflow does not. This README describes the planned product, scope, and architecture. See [Development](#development) for what can be run today.
 
 ## The problem
 
@@ -258,6 +258,20 @@ Optional polish that can be deferred if time runs short (without dropping requir
 - VS Code extension, Git integration, and direct project import.
 - An interactive tutorial engine.
 
-## Getting started
+## Development
 
-Not available yet. Development instructions and exact Docker run commands will be added once the implementation establishes the actual tooling, scripts, and runtime requirements. Development will use the Next.js dev server locally, which also needs a Java runtime for generation. Running ScrAPI outside development uses the Docker image (see [Self-hosting with Docker](#self-hosting-with-docker)).
+Requirements: Node.js (version in `.nvmrc`) and, for running the generator, a Java runtime (Java 11 or newer; verified with 17 and 21).
+
+```sh
+npm ci                    # install dependencies from the lockfile
+npm run setup:generator   # download the pinned OpenAPI Generator JAR once
+npm run dev               # start the Next.js dev server
+npm run check             # lint, typecheck, and tests (same as CI)
+```
+
+The generation workflow is not implemented yet, so `npm run dev` only shows a placeholder page. Docker run commands will be added with the `Dockerfile`. Running ScrAPI outside development uses the Docker image (see [Self-hosting with Docker](#self-hosting-with-docker)).
+
+### Pull request checks
+
+- **CI** (`.github/workflows/ci.yml`) runs `npm run check` on every pull request and on pushes to `main`.
+- **AI code review** (`.github/workflows/ai-review.yml`) posts three advisory review comments (architecture, security, code quality) on pull requests and updates them on each push. It uses Claude through `anthropics/claude-code-action` and is development tooling only; the application itself uses no AI. Setup: add the repository secret `ANTHROPIC_API_KEY`. Drafts and pull requests from forks are skipped. The review prompts live in `.github/ai-review/` and are read from the base branch, so changes to them take effect after they are merged.

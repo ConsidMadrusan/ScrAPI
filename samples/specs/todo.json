@@ -1,0 +1,153 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Todo API",
+    "version": "1.0.0",
+    "description": "Small sample: CRUD on one resource with global bearer security."
+  },
+  "servers": [{ "url": "https://todo.example.com" }],
+  "security": [{ "bearer": [] }],
+  "tags": [{ "name": "todos" }],
+  "paths": {
+    "/todos": {
+      "get": {
+        "tags": ["todos"],
+        "operationId": "listTodos",
+        "summary": "List todos",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/TodoStatus" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All todos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Todo" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["todos"],
+        "operationId": "createTodo",
+        "summary": "Create a todo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/NewTodo" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created todo",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Todo" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/todos/{todoId}": {
+      "parameters": [
+        {
+          "name": "todoId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "integer", "format": "int64" }
+        }
+      ],
+      "get": {
+        "tags": ["todos"],
+        "operationId": "getTodo",
+        "summary": "Get a todo",
+        "responses": {
+          "200": {
+            "description": "The todo",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Todo" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["todos"],
+        "operationId": "updateTodo",
+        "summary": "Replace a todo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/NewTodo" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated todo",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Todo" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["todos"],
+        "operationId": "deleteTodo",
+        "summary": "Delete a todo",
+        "responses": {
+          "204": { "description": "Deleted" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TodoStatus": {
+        "type": "string",
+        "enum": ["open", "done"]
+      },
+      "NewTodo": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": { "type": "string", "maxLength": 200 },
+          "status": { "$ref": "#/components/schemas/TodoStatus" },
+          "dueDate": { "type": "string", "format": "date" }
+        }
+      },
+      "Todo": {
+        "allOf": [
+          { "$ref": "#/components/schemas/NewTodo" },
+          {
+            "type": "object",
+            "required": ["id", "createdAt"],
+            "properties": {
+              "id": { "type": "integer", "format": "int64" },
+              "createdAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        ]
+      }
+    },
+    "securitySchemes": {
+      "bearer": { "type": "http", "scheme": "bearer" }
+    }
+  }
+}
