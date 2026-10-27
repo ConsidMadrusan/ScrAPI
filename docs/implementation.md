@@ -12,3 +12,5 @@ Vid skapandet av plan identifierade agenten flera saker som behövdes klargöras
 Vad den missade att fråga efter är test ramverk och process (dock inlagt i planen som ännu ej godkänt ramverk) samt om kod standard för projektet.
 
 Jag valde att utveckla planen med test ramverk och pipeline för att ai agenten ska göra code reviews vid prs.
+
+Efter att alla 4 faserna utvecklats kunde projektet köras och utförde den grundläggande funktionaliteten. Dock var inte resultatet den som hade föreställts, därav behövdes en tydligare kravställning innan planen formades.
