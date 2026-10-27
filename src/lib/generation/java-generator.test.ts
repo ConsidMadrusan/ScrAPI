@@ -7,7 +7,7 @@ const accessMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("node:fs/promises", () => ({ access: accessMock }));
 
-const { generatorArguments, generatorJarPath, runGenerator } = await import("./java-generator");
+const { generatorArguments, generatorJarPath, MAX_CONCURRENT_GENERATIONS, runGenerator } = await import("./java-generator");
 
 class FakeChild extends EventEmitter {
   kill = vi.fn((signal: string) => {
@@ -35,6 +35,7 @@ const run = {
 describe("generatorArguments", () => {
   it("builds a fixed argument list from target settings", () => {
     expect(generatorArguments(run, "/app/gen.jar")).toEqual([
+      "-Xmx1g",
       "-XX:-UsePerfData",
       "-jar",
       "/app/gen.jar",
@@ -63,6 +64,7 @@ describe("generatorJarPath", () => {
 
 describe("runGenerator", () => {
   beforeEach(() => {
+    spawnMock.mockReset();
     accessMock.mockResolvedValue(undefined);
   });
 
@@ -100,6 +102,45 @@ describe("runGenerator", () => {
 
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
     expect(outcome).toEqual({ status: "timeout" });
+  });
+
+  it("kills the process when the request is aborted", async () => {
+    const child = fakeProcess();
+    const controller = new AbortController();
+    const outcome = runGenerator({ ...run, signal: controller.signal });
+    await vi.waitFor(() => {
+      expect(spawnMock).toHaveBeenCalled();
+    });
+    controller.abort();
+
+    expect(await outcome).toEqual({ status: "aborted" });
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("does not start anything when the request is already aborted", async () => {
+    expect(await runGenerator({ ...run, signal: AbortSignal.abort() })).toEqual({ status: "aborted" });
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects runs beyond the concurrency limit and frees slots afterwards", async () => {
+    const children = Array.from({ length: MAX_CONCURRENT_GENERATIONS }, () => new FakeChild());
+    for (const child of children) spawnMock.mockReturnValueOnce(child);
+    const running = children.map(() => runGenerator(run));
+    await vi.waitFor(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(MAX_CONCURRENT_GENERATIONS);
+    });
+
+    expect(await runGenerator(run)).toEqual({ status: "busy" });
+
+    for (const child of children) child.emit("close", 0);
+    await Promise.all(running);
+    const next = fakeProcess();
+    const outcome = runGenerator(run);
+    await vi.waitFor(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(MAX_CONCURRENT_GENERATIONS + 1);
+    });
+    next.emit("close", 0);
+    expect(await outcome).toEqual({ status: "ok" });
   });
 
   it("reports a missing Java runtime as unavailable", async () => {

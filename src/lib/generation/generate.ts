@@ -19,7 +19,10 @@ export type GenerateResult =
  * Generates the client for a prepared request in a per-request temporary
  * folder, which is removed afterwards whether generation succeeds or fails.
  */
-export async function generateClient(prepared: PreparedGeneration): Promise<GenerateResult> {
+export async function generateClient(
+  prepared: PreparedGeneration,
+  signal?: AbortSignal,
+): Promise<GenerateResult> {
   const target = resolveTarget(prepared.options);
   const startedAt = Date.now();
   const workDir = await mkdtemp(join(tmpdir(), "scrapi-"));
@@ -29,7 +32,7 @@ export async function generateClient(prepared: PreparedGeneration): Promise<Gene
     const outputDir = join(workDir, "output");
     await writeFile(specPath, JSON.stringify(keepFirstTagOnly(prepared.filteredSpec)), "utf8");
 
-    const outcome = await runGenerator({ settings: target.generator, specPath, outputDir });
+    const outcome = await runGenerator({ settings: target.generator, specPath, outputDir, signal });
     if (outcome.status !== "ok") {
       // Metadata only: never the specification or generated code.
       console.warn("Generation failed", {
@@ -87,6 +90,11 @@ function generatorFailure(
         "generation-failed",
         "The generator could not process this specification and selection.",
       );
+    case "busy":
+      return failure(503, "generator-busy", "The server is busy generating other clients. Try again in a moment.");
+    case "aborted":
+      // The client has disconnected, so nobody reads this response.
+      return failure(503, "generation-aborted", "Generation was cancelled.");
     case "unavailable":
       console.error("Code generator is not available", { reason: outcome.reason });
       return failure(503, "generator-unavailable", "Code generation is not available on this server right now.");
