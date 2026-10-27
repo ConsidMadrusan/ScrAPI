@@ -3,7 +3,9 @@
 #
 # Three reviews run in parallel (architecture, security, code quality). Each
 # keeps one PR comment up to date. Prompts are read from the base branch so a
-# pull request cannot change its own review instructions.
+# pull request cannot change its own review instructions. A prompt that is not
+# on the base branch yet is read from the pull request instead, and the comment
+# says so.
 #
 # Requires the repository secret ANTHROPIC_API_KEY. Fork PRs and drafts are
 # skipped (forks do not receive secrets).
@@ -48,16 +50,26 @@ jobs:
           REVIEW: ${{ matrix.review }}
         run: |
           prompt_path=".github/ai-review/${REVIEW}.md"
-          if ! git cat-file -e "origin/${BASE_REF}:${prompt_path}" 2>/dev/null; then
-            echo "::notice::${prompt_path} is not on ${BASE_REF} yet; skipping this review."
+          if git cat-file -e "origin/${BASE_REF}:${prompt_path}" 2>/dev/null; then
+            source="base"
+            text="$(git show "origin/${BASE_REF}:${prompt_path}")"
+          elif [ -f "${prompt_path}" ]; then
+            # Bootstrap: the prompt is not on the base branch yet (for example the
+            # pull request that adds it), so use the PR's own copy and say so.
+            echo "::warning::${prompt_path} is not on ${BASE_REF} yet; using the pull request's copy."
+            source="pr"
+            text="$(cat "${prompt_path}")"
+          else
+            echo "::notice::${prompt_path} does not exist; skipping this review."
             echo "available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           delimiter="PROMPT_$(openssl rand -hex 16)"
           {
             echo "available=true"
+            echo "source=${source}"
             echo "text<<${delimiter}"
-            git show "origin/${BASE_REF}:${prompt_path}"
+            printf '%s\n' "${text}"
             echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
 
@@ -98,6 +110,7 @@ jobs:
           REVIEW: ${{ matrix.review }}
           TITLE: ${{ matrix.title }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PROMPT_SOURCE: ${{ steps.prompt.outputs.source }}
           # Parsed with jq below: fromJSON() in an expression fails the whole
           # workflow template when the output is empty.
           STRUCTURED_OUTPUT: ${{ steps.claude.outputs.structured_output }}
@@ -116,6 +129,10 @@ jobs:
             echo
             printf '%s\n' "${REVIEW_TEXT}"
             echo
+            if [ "${PROMPT_SOURCE}" = "pr" ]; then
+              echo "> **Note:** the review prompt is not on the base branch yet, so this review used the pull request's own copy of it."
+              echo
+            fi
             echo "<sub>Automated, advisory review by Claude for commit ${HEAD_SHA}.</sub>"
           } > "${body_file}"
 

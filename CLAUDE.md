@@ -204,7 +204,7 @@ Pipeline:
 There are exactly three workflows. Do not add others without user approval.
 
 - `.github/workflows/ci.yml` runs `npm run check` on pull requests and on pushes to `main`. It needs no Java, Docker, or secrets.
-- `.github/workflows/ai-review.yml` runs an advisory Claude code review on pull requests. It runs three parallel reviews (architecture, security, code quality), using prompts in `.github/ai-review/` that are read from the base branch. Each review keeps one PR comment up to date. It is development tooling, not part of the application. It is the only workflow allowed to use a secret beyond `GITHUB_TOKEN`: the repository secret `ANTHROPIC_API_KEY`. Claude gets read-only tools, and a plain shell step posts the comment.
+- `.github/workflows/ai-review.yml` runs an advisory Claude code review on pull requests. It runs three parallel reviews (architecture, security, code quality), using prompts in `.github/ai-review/` that are read from the base branch (or from the pull request, with a note in the comment, while a prompt is not on the base branch yet). Each review keeps one PR comment up to date. It is development tooling, not part of the application. It is the only workflow allowed to use a secret beyond `GITHUB_TOKEN`: the repository secret `ANTHROPIC_API_KEY`. Claude gets read-only tools, and a plain shell step posts the comment.
 - `.github/workflows/release-image.yml` is the release pipeline. It builds and pushes the image to `ghcr.io/<owner>/<repo>` when a `vX.Y.Z` tag is pushed, tagging `X.Y.Z`, `X.Y`, and `latest`.
 
 Rules for the release workflow:
