@@ -54,5 +54,8 @@ desktop.ini
 /generated-output/
 /scrapi-*.zip
 
+# Private implementation notes; kept locally only.
+/docs/implementation.md
+
 # next-env.d.ts is intentionally NOT ignored; it stays tracked unless the
 # implementation documents a reason to change that.
