@@ -12,9 +12,9 @@ The **MVP is implemented** (all four phases). Release is pending: no version tag
   - target configuration (`src/lib/targets/`)
   - generation (`src/lib/generation/`)
   - ZIP building (`src/lib/archive/`)
-  - the `/api/validate`, `/api/generate`, and `/api/archive` (ZIP response built on the server from the generation result) Route Handlers
-  - the workflow UI (`src/components/workflow/`)
-- Integration guides: deterministic templates in `src/lib/guides/`, rendered in the UI (`src/components/guide/`) and as `INTEGRATION.md` in the ZIP, both from the same generation result.
+  - the `/api/validate`, `/api/generate` (one framework combination per request), and `/api/archive` (one ZIP built on the server from all results of a generation run, one folder per combination) Route Handlers
+  - the workflow UI: one route per stage in `src/app/(workflow)/` (`/`, `/select`, `/targets`, `/generating`, `/implement` as a landing screen for ZIP download or guide, and `/implement/guide` for the one-step-at-a-time guide), screens in `src/components/workflow/`, and shared state in a React context provider (`workflow-context.tsx`) mounted by the route group layout
+- Integration guides: deterministic templates in `src/lib/guides/`, chained into one guide for all combinations (`chained.ts`), rendered in the UI (`src/components/guide/`) and as `INTEGRATION.md` in the ZIP, both from the same generation results.
 - The `typescript-fetch` template override in `generator-templates/`.
 - Sample specifications in `samples/specs/`, and shared test fixtures in `src/test/`.
 - The root `Dockerfile` and `.dockerignore`, and the CI and release workflows in `.github/workflows/`.
@@ -31,12 +31,11 @@ It helps developers who consume HTTP APIs from .NET or TypeScript front-end proj
 
 Workflow:
 
-1. Paste an OpenAPI JSON specification or upload a `.json` file.
-2. Validate it and show understandable errors.
-3. Select one output target: C#/.NET, TypeScript for Next.js/React, TypeScript for Nuxt/Vue, or TypeScript for Angular.
-4. Select which API operations to generate (endpoint selection).
-5. Generate typed integration files with an existing deterministic generator.
-6. Download a ZIP, or follow a visual step-by-step guide to add the files to an existing project manually.
+1. Paste an OpenAPI JSON specification or upload a `.json` file. Pasting or uploading validates it immediately (typed input uses a "Continue" button) and shows understandable errors; a valid specification opens the next stage.
+2. Select which API operations to generate (endpoint selection), then press "Next".
+3. Choose whether the code goes into an existing project or a new one, and select one or more framework combinations: C#/.NET, TypeScript for Next.js/React or Nuxt/Vue (each with the `axios` and/or `fetch` HTTP client), or TypeScript for Angular. The project choice changes only the guide (and `INTEGRATION.md`), never the generated files.
+4. Generate typed integration files with an existing deterministic generator, one combination at a time, behind a loading screen.
+5. On the implementation landing screen, download one ZIP with every combination (the card then shows it was downloaded), or open the visual step-by-step guide: one step at a time with Back/Next, covering every combination in turn. Failed combinations are listed with a retry; the successful ones remain usable.
 
 ScrAPI generates API integration code only: no UI, databases, or business logic. It never writes into the user's project. The application uses **no AI, LLM APIs, or paid generation services**.
 
@@ -82,7 +81,11 @@ Supported destination layouts (the paths are set in `src/lib/targets/config.ts`)
 | Angular (Angular CLI workspace) | `api-client/` | `src/app/api-client/` |
 | C#/.NET | `ApiClient/` (`ApiClient.csproj`, namespace `ApiClient`) | `src/ApiClient/`, next to the solution |
 
-Only the client source files are kept. Generator scaffolding (READMEs, docs, tests, solution files, CI files, `git_push.sh`, `.openapi-generator/`) is left out.
+In the downloaded ZIP, each combination's folder sits inside a folder named by its combination key, for example `nextjs-axios/api-client/` or `csharp/ApiClient/`, next to one root `INTEGRATION.md`.
+
+Only the client source files are kept. Generator scaffolding (READMEs, docs, tests, solution files, CI files, `git_push.sh`, `.openapi-generator/`) is left out. C# files named after generic types lose the .NET arity suffix (``ApiResponse`1.cs`` → `ApiResponse.cs`, `dropGenericArity` in `src/lib/targets/config.ts`) unless that would clash with another file; SDK-style projects include every `.cs` file, so names do not affect the build.
+
+"New project" guides start with the official CLI commands that create the supported layout. They were verified (project created, guide followed, framework build run) with: `npx create-next-app@16` (16.4.5), `npx create-nuxt@4` (4.0.3, Nuxt 4.6), `npx @angular/cli@22 new --defaults` (22.2), and `dotnet new sln` + `dotnet new webapi -f net10.0` (SDK 10.0.301). Re-verify when changing these commands or versions.
 
 Do not claim other generators, options, or framework versions without verifying them the same way.
 
@@ -94,7 +97,7 @@ Do not claim other generators, options, or framework versions without verifying 
 
 ### State management
 
-- Prefer local React state (and lifting state up) for the linear workflow.
+- Prefer local React state (and lifting state up) for the linear workflow. The workflow stages share state through a React context provider in the `(workflow)` route group layout, which persists across client navigation. Nothing is persisted: reloading a later stage redirects to the start.
 - Introduce Zustand only when sharing state across specification input, operation selection, generation result, and guide becomes awkward locally (e.g. deep prop drilling across unrelated subtrees). Keep any store small and focused.
 - Never use Zustand (or any shared module-level store) for server-side request state.
 
@@ -133,7 +136,7 @@ Rules:
 - Never interpolate specification content into shell commands. Invoke approved generators with fixed arguments via safe process APIs (argument arrays, no shell). Pass the specification as a file in the temp directory.
 - Keep every generated and archived file path inside the intended output directory. Reject absolute paths, `..` segments, and other unsafe archive entries.
 - Keep target configuration centralized (one definition per target: generator, options, layout, destination mapping, guide template). Reuse the shared TypeScript generation path for Next.js/React and Nuxt/Vue.
-- Build the ZIP and the visual guide from the **same generation result** so paths and file contents always match. Where an integration destination differs from the archive-relative path, show the mapping explicitly.
+- Build the ZIP and the visual guide from the **same generation results** so paths and file contents always match. Each combination's files go in a ZIP folder named by its combination key (`combinationKey` in `src/lib/targets/catalog.ts`), derived on the server, never taken from the request. Where an integration destination differs from the archive-relative path, show the mapping explicitly.
 - Usage examples must be derived from a selected operation and the actual generated method signatures. Never invent endpoints, fields, or credentials; clearly mark values the user must supply.
 - Guides document a supported project layout per target, distinguish adding new files from small edits to existing configuration, and never instruct users to replace existing application files wholesale. Group file-copying into logical steps rather than one step per file.
 - Return actionable errors without stack traces or sensitive server details.
@@ -244,9 +247,9 @@ Rules for the release workflow:
 
 ## MVP scope reminders
 
-In scope: one specification and one target per generation, JSON input, OpenAPI 3.0.x, internal references, endpoint selection, ZIP download, and template-based visual integration guides for all four targets.
+In scope: one specification and one or more framework combinations per generation, JSON input, OpenAPI 3.0.x, internal references, endpoint selection, ZIP download, and template-based visual integration guides for all four targets.
 
-Out of scope: accounts, database, billing, saved history, collaboration, VS Code extension, Git integration, direct project import, external references, generated React hooks / Vue composables, framework-specific SSR integrations, app scaffolds, generated Zod schemas, automatic runtime response validation in generated clients, and an interactive tutorial engine.
+Out of scope: accounts, database, billing, saved history, collaboration, VS Code extension, Git integration, direct project import, external references, generated React hooks / Vue composables, framework-specific SSR integrations, app scaffolds generated by ScrAPI (the "new project" guide only shows official CLI commands), generated Zod schemas, automatic runtime response validation in generated clients, and an interactive tutorial engine.
 
 The schedule (~20 hours over four weeks) is tight. If a required feature is at risk, raise it with the user instead of silently cutting it. See `README.md` for the roadmap, risks, and acceptance criteria.
 

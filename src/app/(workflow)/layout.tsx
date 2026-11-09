@@ -1,6 +1,7 @@
-import { Workflow } from "@/components/workflow/workflow";
+import { WorkflowProvider } from "@/components/workflow/workflow-context";
 
-export default function Home() {
+/** Shared by every workflow stage, so the workflow state survives moving between them. */
+export default function WorkflowLayout({ children }: LayoutProps<"/">) {
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-4 py-12">
       <header className="flex flex-col gap-2">
@@ -9,7 +10,7 @@ export default function Home() {
           Generate typed API integration code from an OpenAPI specification.
         </p>
       </header>
-      <Workflow />
+      <WorkflowProvider>{children}</WorkflowProvider>
     </main>
   );
 }

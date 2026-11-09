@@ -1,3 +1,5 @@
+import { combinationKey } from "@/lib/targets/catalog";
+import type { ProjectMode } from "@/lib/validation/requests";
 import type { GenerateSuccess } from "@/lib/validation/responses";
 import type { Guide, GuideBlock, GuideStep } from "./types";
 import { findUsageExample, pascalCase, type UsageExample } from "./usage";
@@ -10,22 +12,78 @@ const BASE_URL_PLACEHOLDER = {
   description: "The base URL of the API, for example the URL your API is deployed at.",
 };
 
+export interface RenderGuideOptions {
+  /** Folder in the ZIP that holds this result's files, e.g. `nextjs-axios`. */
+  zipFolder?: string;
+  /** Whether the guide adds the client to an existing project or creates a new one first. Default: existing. */
+  project?: ProjectMode;
+}
+
+/** Folder and project names the "new project" guides create. Fixed so every later step can name them. */
+const NEW_DOTNET_SOLUTION = "MyApp";
+const NEW_DOTNET_PROJECT = "MyApp.Api";
+
+/** Where the guide's paths start, and the step that creates it in a new project. */
+interface ProjectSetup {
+  mode: ProjectMode;
+  /** How the guide refers to the folder that project paths are relative to. */
+  root: string;
+  /** Folder of the new project (TypeScript) or solution (C#). */
+  newFolder: string;
+}
+
 /**
  * Renders the integration guide for a generation result. Deterministic: the
  * same result always gives the same guide, and every path, file, and method
  * in it comes from the result.
  */
-export function renderGuide(result: GenerateSuccess): Guide {
+export function renderGuide(result: GenerateSuccess, options: RenderGuideOptions = {}): Guide {
   const usage = findUsageExample(result);
+  const setup = projectSetup(result, options.project ?? "existing");
+  const filesStep = addFilesStep(result, options.zipFolder, setup);
   switch (result.options.target) {
     case "typescript-next":
     case "typescript-nuxt":
-      return typescriptGuide(result, result.options.target, result.options.httpClient, usage);
+      return typescriptGuide(result, result.options.target, result.options.httpClient, usage, filesStep, setup);
     case "typescript-angular":
-      return angularGuide(result, usage);
+      return angularGuide(usage, filesStep, setup);
     case "csharp":
-      return csharpGuide(result, usage);
+      return csharpGuide(result, usage, filesStep, setup);
   }
+}
+
+function projectSetup(result: GenerateSuccess, mode: ProjectMode): ProjectSetup {
+  const isDotnet = result.options.target === "csharp";
+  const newFolder = isDotnet ? NEW_DOTNET_SOLUTION : `${combinationKey(result.options)}-app`;
+  if (mode === "new") {
+    return {
+      mode,
+      newFolder,
+      root: isDotnet ? `the \`${newFolder}\` solution folder you created` : `the \`${newFolder}\` project folder you created`,
+    };
+  }
+  return {
+    mode,
+    newFolder,
+    root: isDotnet
+      ? "your solution folder (the folder that contains your `.sln` or `.slnx` file)"
+      : "your project folder (the folder that contains `package.json`)",
+  };
+}
+
+/** The first step of a "new project" guide: official CLI commands that create the supported layout. */
+function createStep(title: string, description: string, commands: readonly string[], setup: ProjectSetup): GuideStep {
+  return {
+    title,
+    blocks: [
+      { kind: "text", text: `${description} Run these commands in the folder where the new project should be created:` },
+      ...commands.map((command): GuideBlock => ({ kind: "command", command })),
+      {
+        kind: "text",
+        text: `Every later path and command in this part of the guide is relative to the \`${setup.newFolder}\` folder. You can choose another folder name: change it in the commands above.`,
+      },
+    ],
+  };
 }
 
 const FRAMEWORKS = {
@@ -37,6 +95,10 @@ const FRAMEWORKS = {
     ],
     importPath: "@/lib/api-client",
     exampleDir: "src/lib",
+    create: (folder: string) => ({
+      description: "Create a Next.js 16 project with the App Router, TypeScript, the `src/` directory, and the `@/*` import alias.",
+      commands: [`npx create-next-app@16 ${folder} --ts --app --src-dir --import-alias "@/*" --use-npm --yes`, `cd ${folder}`],
+    }),
     verify: ["npx tsc --noEmit", "npm run build"],
     aliasError: "Cannot find module '@/lib/api-client': the `@/*` alias is missing. Add `\"paths\": { \"@/*\": [\"./src/*\"] }` to `compilerOptions` in `tsconfig.json`, or import with a relative path.",
   },
@@ -48,6 +110,10 @@ const FRAMEWORKS = {
     ],
     importPath: "~/lib/api-client",
     exampleDir: "app/lib",
+    create: (folder: string) => ({
+      description: "Create a Nuxt 4 project from the minimal template. It uses the `app/` source directory and the `~` alias.",
+      commands: [`npx create-nuxt@4 ${folder} --template minimal --packageManager npm --gitInit`, `cd ${folder}`],
+    }),
     verify: ["npm install --save-dev vue-tsc typescript@^6", "npx nuxi typecheck", "npm run build"],
     aliasError: "Cannot find module '~/lib/api-client': check that the files are in `app/lib/api-client/` (Nuxt 4 uses `app/` as its source directory).",
   },
@@ -58,8 +124,11 @@ function typescriptGuide(
   target: "typescript-next" | "typescript-nuxt",
   httpClient: "axios" | "fetch",
   usage: UsageExample | undefined,
+  filesStep: GuideStep,
+  setup: ProjectSetup,
 ): Guide {
   const framework = FRAMEWORKS[target];
+  const create = framework.create(setup.newFolder);
   const exampleFile = usage ? `${framework.exampleDir}/${kebabCase(usage.typeName)}-example.ts` : "";
   const commonErrors = [
     framework.aliasError,
@@ -71,27 +140,32 @@ function typescriptGuide(
   ];
 
   return {
-    title: `Add the TypeScript client to your ${framework.name} project`,
+    title:
+      setup.mode === "new"
+        ? `Create a ${framework.name} project with the TypeScript client`
+        : `Add the TypeScript client to your ${framework.name} project`,
     placeholders: [BASE_URL_PLACEHOLDER],
     steps: [
-      {
-        title: "Check your project setup",
-        blocks: [
-          { kind: "text", text: "This guide assumes:" },
-          {
-            kind: "list",
-            items: [
-              ...framework.setup,
-              `The \`${httpClient}\` HTTP client, as chosen when generating.`,
+      setup.mode === "new"
+        ? createStep(`Create the ${framework.name} project`, create.description, create.commands, setup)
+        : {
+            title: "Check your project setup",
+            blocks: [
+              { kind: "text", text: "This guide assumes:" },
+              {
+                kind: "list",
+                items: [
+                  ...framework.setup,
+                  `The \`${httpClient}\` HTTP client, as chosen when generating.`,
+                ],
+              },
+              {
+                kind: "text",
+                text: "The steps add new files and make no changes to your existing application files.",
+              },
             ],
           },
-          {
-            kind: "text",
-            text: "The steps add new files and make no changes to your existing application files.",
-          },
-        ],
-      },
-      addFilesStep(result, "Do not edit the generated files; generate them again when the API changes."),
+      filesStep,
       {
         title: "Install dependencies",
         blocks:
@@ -158,32 +232,42 @@ function typescriptExample(usage: UsageExample, importPath: string, httpClient: 
   ].join("\n");
 }
 
-function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined): Guide {
+function angularGuide(usage: UsageExample | undefined, filesStep: GuideStep, setup: ProjectSetup): Guide {
   const exampleClass = usage ? `${pascalCase(usage.methodName)}Example` : "";
   const exampleFile = usage ? `src/app/${kebabCase(usage.methodName)}-example.ts` : "";
 
   return {
-    title: "Add the TypeScript client to your Angular project",
+    title:
+      setup.mode === "new"
+        ? "Create an Angular project with the TypeScript client"
+        : "Add the TypeScript client to your Angular project",
     placeholders: [BASE_URL_PLACEHOLDER],
     steps: [
-      {
-        title: "Check your project setup",
-        blocks: [
-          { kind: "text", text: "This guide assumes:" },
-          {
-            kind: "list",
-            items: [
-              "An Angular 22 standalone application created with the Angular CLI.",
-              "Application providers in `src/app/app.config.ts`.",
+      setup.mode === "new"
+        ? createStep(
+            "Create the Angular project",
+            "Create an Angular 22 standalone application with the Angular CLI's default options (CSS styles, no server-side rendering).",
+            [`npx @angular/cli@22 new ${setup.newFolder} --defaults`, `cd ${setup.newFolder}`],
+            setup,
+          )
+        : {
+            title: "Check your project setup",
+            blocks: [
+              { kind: "text", text: "This guide assumes:" },
+              {
+                kind: "list",
+                items: [
+                  "An Angular 22 standalone application created with the Angular CLI.",
+                  "Application providers in `src/app/app.config.ts`.",
+                ],
+              },
+              {
+                kind: "text",
+                text: "The steps add new files and make one small edit to `app.config.ts`.",
+              },
             ],
           },
-          {
-            kind: "text",
-            text: "The steps add new files and make one small edit to `app.config.ts`.",
-          },
-        ],
-      },
-      addFilesStep(result, "Do not edit the generated files; generate them again when the API changes."),
+      filesStep,
       {
         title: "Register the HTTP client and the API",
         blocks: [
@@ -262,43 +346,66 @@ function angularGuide(result: GenerateSuccess, usage: UsageExample | undefined):
   };
 }
 
-function csharpGuide(result: GenerateSuccess, usage: UsageExample | undefined): Guide {
+function csharpGuide(
+  result: GenerateSuccess,
+  usage: UsageExample | undefined,
+  filesStep: GuideStep,
+  setup: ProjectSetup,
+): Guide {
   const projectFile = `${result.destinationRoot}/${result.archiveRoot}.csproj`;
+  // The application project that uses the client: a placeholder, or the one the guide creates.
+  const appDir = setup.mode === "new" ? `src/${NEW_DOTNET_PROJECT}` : PROJECT;
+  const appProject = setup.mode === "new" ? `${appDir}/${NEW_DOTNET_PROJECT}.csproj` : `${PROJECT}/${PROJECT}.csproj`;
   const exampleClass = usage ? `${usage.typeName.replace(/^I(?=[A-Z])/, "")}Example` : "";
   const packages = packageReferences(result);
 
   return {
-    title: "Add the C# client to your .NET solution",
-    placeholders: [
-      BASE_URL_PLACEHOLDER,
-      { token: PROJECT, description: "The folder and project file name of your application project." },
-    ],
+    title: setup.mode === "new" ? "Create a .NET solution with the C# client" : "Add the C# client to your .NET solution",
+    placeholders:
+      setup.mode === "new"
+        ? [BASE_URL_PLACEHOLDER]
+        : [
+            BASE_URL_PLACEHOLDER,
+            { token: PROJECT, description: "The folder and project file name of your application project." },
+          ],
     steps: [
-      {
-        title: "Check your project setup",
-        blocks: [
-          { kind: "text", text: "This guide assumes:" },
-          {
-            kind: "list",
-            items: [
-              "The .NET 10 SDK. The client project targets `net10.0`, so the project that uses it must target `net10.0` as well.",
-              "A solution with your application project. The client becomes a separate project in `src/` next to it.",
-              "An application that uses the .NET generic host, for example ASP.NET Core or a worker service (`builder.Services`).",
+      setup.mode === "new"
+        ? createStep(
+            "Create the solution and the Web API project",
+            `Create a solution with an ASP.NET Core Web API project, \`${NEW_DOTNET_PROJECT}\`, in \`src/\`. You need the .NET 10 SDK.`,
+            [
+              `dotnet new sln -n ${NEW_DOTNET_SOLUTION} -o ${setup.newFolder}`,
+              `cd ${setup.newFolder}`,
+              `dotnet new webapi -n ${NEW_DOTNET_PROJECT} -o ${appDir} -f net10.0`,
+              `dotnet sln add ${appProject}`,
+            ],
+            setup,
+          )
+        : {
+            title: "Check your project setup",
+            blocks: [
+              { kind: "text", text: "This guide assumes:" },
+              {
+                kind: "list",
+                items: [
+                  "The .NET 10 SDK. The client project targets `net10.0`, so the project that uses it must target `net10.0` as well.",
+                  "A solution with your application project. The client becomes a separate project in `src/` next to it.",
+                  "An application that uses the .NET generic host, for example ASP.NET Core or a worker service (`builder.Services`).",
+                ],
+              },
+              {
+                kind: "text",
+                text: "The steps add a new project and make one small edit to `Program.cs`.",
+              },
             ],
           },
-          {
-            kind: "text",
-            text: "The steps add a new project and make one small edit to `Program.cs`.",
-          },
-        ],
-      },
-      addFilesStep(result, "Do not edit the generated files; generate them again when the API changes."),
+      filesStep,
       {
         title: "Add the project to your solution",
         blocks: [
           { kind: "text", text: "From the solution folder, add the client project and reference it from your application project:" },
           { kind: "command", command: `dotnet sln add ${projectFile}` },
-          { kind: "command", command: `dotnet add ${PROJECT}/${PROJECT}.csproj reference ${projectFile}` },
+          { kind: "command", command: `dotnet add ${appProject} reference ${projectFile}` },
           ...(packages.length > 0
             ? ([
                 {
@@ -320,7 +427,7 @@ function csharpGuide(result: GenerateSuccess, usage: UsageExample | undefined): 
           {
             kind: "code",
             language: "csharp",
-            file: `${PROJECT}/Program.cs`,
+            file: `${appDir}/Program.cs`,
             action: "edit",
             code: [
               `using ${result.archiveRoot}.Extensions;`,
@@ -348,12 +455,12 @@ function csharpGuide(result: GenerateSuccess, usage: UsageExample | undefined): 
             blocks: [
               {
                 kind: "text",
-                text: `Create \`${PROJECT}/${exampleClass}.cs\`, which receives \`${usage.typeName}\` through dependency injection and calls \`${usage.operation.id}\`. Register it with \`builder.Services.AddTransient<${exampleClass}>();\` or inject \`${usage.typeName}\` into your own services and controllers.`,
+                text: `Create \`${appDir}/${exampleClass}.cs\`, which receives \`${usage.typeName}\` through dependency injection and calls \`${usage.operation.id}\`. Register it with \`builder.Services.AddTransient<${exampleClass}>();\` or inject \`${usage.typeName}\` into your own services and controllers.`,
               },
               {
                 kind: "code",
                 language: "csharp",
-                file: `${PROJECT}/${exampleClass}.cs`,
+                file: `${appDir}/${exampleClass}.cs`,
                 action: "create",
                 code: [
                   `using ${result.archiveRoot}.Api;`,
@@ -385,20 +492,44 @@ function csharpGuide(result: GenerateSuccess, usage: UsageExample | undefined): 
   };
 }
 
-/** One step for all generated files: they are copied as one folder. */
-function addFilesStep(result: GenerateSuccess, note: string): GuideStep {
+/**
+ * One step for all generated files: they are copied as one folder. It names
+ * the folder that paths start from and a file to check the result with.
+ */
+function addFilesStep(result: GenerateSuccess, zipFolder: string | undefined, setup: ProjectSetup): GuideStep {
+  const folder = zipFolder === undefined ? result.archiveRoot : `${zipFolder}/${result.archiveRoot}`;
+  const parent = result.destinationRoot.split("/").slice(0, -1).join("/");
+  const check = checkFile(result);
   return {
     title: "Add the generated files",
     blocks: [
       {
+        kind: "list",
+        items: [
+          `In the ZIP, find the \`${folder}\` folder (${String(result.files.length)} files).`,
+          parent === ""
+            ? `Copy that whole folder into ${setup.root}.`
+            : `Copy that whole folder into the \`${parent}/\` folder of ${setup.root}. Create \`${parent}/\` if it does not exist yet.`,
+          `The folder is now \`${result.destinationRoot}/\`${check === undefined ? "" : `: for example, \`${check}\` exists`}. It must not end up one level deeper, as \`${result.destinationRoot}/${result.archiveRoot}/\`.`,
+        ],
+      },
+      {
         kind: "text",
-        text: `Copy the \`${result.archiveRoot}\` folder from the ZIP to \`${result.destinationRoot}/\` in your project (${String(result.files.length)} files). ${note}`,
+        text: "The tree below shows where every file belongs. Do not edit the generated files; generate them again when the API changes.",
       },
       { kind: "tree" },
       { kind: "mapping" },
       { kind: "files" },
     ],
   };
+}
+
+/** A file directly in the client folder that shows it was copied to the right place. */
+function checkFile(result: GenerateSuccess): string | undefined {
+  const topLevel = result.files
+    .map((file) => file.destinationPath)
+    .filter((path) => !path.slice(result.destinationRoot.length + 1).includes("/"));
+  return topLevel.find((path) => path.endsWith(".csproj")) ?? topLevel.find((path) => path.endsWith("/index.ts")) ?? topLevel[0];
 }
 
 function signatureNote(usage: UsageExample): GuideBlock[] {

@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { MAX_OUTPUT_FILES } from "./limits";
+import { MAX_COMBINATIONS, MAX_OUTPUT_FILES } from "./limits";
 import { httpMethodSchema } from "./operation";
-import { generationOptionsSchema } from "./requests";
+import { generationOptionsSchema, projectModeSchema } from "./requests";
 
 /** A user-facing problem. Never contains stack traces or server details. */
 export const problemSchema = z.object({
@@ -82,3 +82,14 @@ export const generateResponseSchema = z.discriminatedUnion("ok", [
   failureResponseSchema,
 ]);
 export type GenerateResponse = z.infer<typeof generateResponseSchema>;
+
+/** A ZIP request: the successful results of one generation run, one per framework combination. */
+export const archiveRequestSchema = z.object({
+  results: z
+    .array(generateSuccessSchema)
+    .min(1, "There is nothing to archive.")
+    .max(MAX_COMBINATIONS, "Too many framework combinations."),
+  /** Which guide INTEGRATION.md contains: for an existing project or a new one. */
+  project: projectModeSchema,
+});
+export type ArchiveRequest = z.infer<typeof archiveRequestSchema>;

@@ -19,6 +19,13 @@ export interface TargetConfig {
   sourceDir: string;
   /** File extensions to keep from `sourceDir`. Everything else is generator scaffolding. */
   extensions: readonly string[];
+  /**
+   * Whether file names of generic types lose their arity suffix
+   * (``ApiResponse`1.cs`` → `ApiResponse.cs`). The C# generator names them the
+   * way .NET names generic types; the project file includes every `.cs` file,
+   * so the name does not matter to the compiler.
+   */
+  dropGenericArity?: boolean;
 }
 
 /** Generator global properties for every target: no generated docs or tests. */
@@ -57,6 +64,7 @@ export function resolveTarget(options: GenerationOptions): TargetConfig {
         destinationRoot: "src/ApiClient",
         sourceDir: "src/ApiClient",
         extensions: [".cs", ".csproj"],
+        dropGenericArity: true,
       };
   }
 }
@@ -109,4 +117,9 @@ export function toArchivePath(target: TargetConfig, outputPath: string): string 
 export function toDestinationPath(target: TargetConfig, archivePath: string): string {
   const relative = archivePath.slice(target.archiveRoot.length + 1);
   return `${target.destinationRoot}/${relative}`;
+}
+
+/** ``Client/ApiResponse`1.cs`` → `Client/ApiResponse.cs`. Other paths are unchanged. */
+export function withoutGenericArity(path: string): string {
+  return path.replace(/`\d+(\.[A-Za-z]+)$/, "$1");
 }

@@ -3,28 +3,38 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { zipPath, type ChainedGuide, type GuideSection } from "@/lib/guides/chained";
 import { renderTree } from "@/lib/guides/tree";
-import type { Guide, GuideBlock } from "@/lib/guides/types";
-import type { GenerateSuccess } from "@/lib/validation/responses";
+import type { GuideBlock } from "@/lib/guides/types";
 import { CopyButton } from "./copy-button";
 import { FileViewer } from "./file-viewer";
 import { RichText } from "./rich-text";
 import { usePrefersReducedMotion } from "./use-prefers-reduced-motion";
 
 interface IntegrationGuideProps {
-  guide: Guide;
-  result: GenerateSuccess;
+  guide: ChainedGuide;
+  /** Called by "Finish" on the last step. Without it, the last step has no way forward. */
+  onFinish?: () => void;
 }
 
-export function IntegrationGuide({ guide, result }: IntegrationGuideProps) {
+/**
+ * The guide as an onboarding flow: one step at a time with a progress bar,
+ * Back and Next. Steps of every section follow each other.
+ */
+export function IntegrationGuide({ guide, onFinish }: IntegrationGuideProps) {
   const [index, setIndex] = useState(0);
   const idPrefix = useId();
   const navigated = useRef(false);
   const reduceMotion = usePrefersReducedMotion();
-  const step = guide.steps[index];
+  const steps = guide.sections.flatMap((section) => section.guide.steps.map((step) => ({ section, step })));
+  const current = steps[index];
   const headingId = `${idPrefix}-step-${String(index)}`;
+  const multiple = guide.sections.length > 1;
 
-  if (!step) return null;
+  if (!current) return null;
+  const { section, step } = current;
+  const isLast = index === steps.length - 1;
+  const progress = ((index + 1) / steps.length) * 100;
   const goTo = (next: number) => {
     navigated.current = true;
     setIndex(next);
@@ -32,7 +42,30 @@ export function IntegrationGuide({ guide, result }: IntegrationGuideProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      <h3 className="text-lg font-semibold">{guide.title}</h3>
+      <h2 className="text-xl font-semibold">{guide.title}</h2>
+
+      <div className="flex flex-col gap-2">
+        <div
+          role="progressbar"
+          aria-label="Guide progress"
+          aria-valuemin={1}
+          aria-valuemax={steps.length}
+          aria-valuenow={index + 1}
+          aria-valuetext={`Step ${String(index + 1)} of ${String(steps.length)}`}
+          className="bg-muted h-2 overflow-hidden rounded-full"
+        >
+          <motion.div
+            className="bg-primary h-full rounded-full"
+            initial={false}
+            animate={{ width: `${String(progress)}%` }}
+            transition={{ duration: reduceMotion ? 0 : 0.25 }}
+          />
+        </div>
+        <p className="text-muted-foreground text-sm">
+          Step {index + 1} of {steps.length}
+          {multiple ? ` · ${section.label}` : null}
+        </p>
+      </div>
 
       {guide.placeholders.length > 0 ? (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
@@ -47,25 +80,6 @@ export function IntegrationGuide({ guide, result }: IntegrationGuideProps) {
         </div>
       ) : null}
 
-      <nav aria-label="Guide steps">
-        <ol className="flex flex-wrap gap-2">
-          {guide.steps.map((candidate, candidateIndex) => (
-            <li key={candidate.title}>
-              <Button
-                variant={candidateIndex === index ? "default" : "outline"}
-                size="sm"
-                aria-current={candidateIndex === index ? "step" : undefined}
-                onClick={() => {
-                  goTo(candidateIndex);
-                }}
-              >
-                {candidateIndex + 1}. {candidate.title}
-              </Button>
-            </li>
-          ))}
-        </ol>
-      </nav>
-
       <AnimatePresence mode="wait" initial={false}>
         <motion.section
           key={index}
@@ -74,12 +88,9 @@ export function IntegrationGuide({ guide, result }: IntegrationGuideProps) {
           animate={{ opacity: 1, x: 0 }}
           exit={reduceMotion ? { opacity: 1 } : { opacity: 0, x: -16 }}
           transition={{ duration: reduceMotion ? 0 : 0.18 }}
-          className="flex flex-col gap-4"
+          className="flex min-h-64 flex-col gap-4 rounded-lg border p-4 sm:p-6"
         >
-          <p className="text-muted-foreground text-sm">
-            Step {index + 1} of {guide.steps.length}
-          </p>
-          <h4
+          <h3
             id={headingId}
             // The heading mounts after the previous step has animated out; move
             // focus to it after navigation, but not on first render.
@@ -87,12 +98,12 @@ export function IntegrationGuide({ guide, result }: IntegrationGuideProps) {
               if (element && navigated.current) element.focus();
             }}
             tabIndex={-1}
-            className="text-base font-semibold outline-none"
+            className="text-lg font-semibold outline-none"
           >
             {step.title}
-          </h4>
+          </h3>
           {step.blocks.map((block, blockIndex) => (
-            <Block key={blockIndex} block={block} result={result} />
+            <Block key={blockIndex} block={block} section={section} />
           ))}
         </motion.section>
       </AnimatePresence>
@@ -105,22 +116,28 @@ export function IntegrationGuide({ guide, result }: IntegrationGuideProps) {
             goTo(index - 1);
           }}
         >
-          Previous
+          Back
         </Button>
-        <Button
-          disabled={index === guide.steps.length - 1}
-          onClick={() => {
-            goTo(index + 1);
-          }}
-        >
-          Next
-        </Button>
+        {isLast ? (
+          <Button disabled={onFinish === undefined} onClick={onFinish}>
+            Finish
+          </Button>
+        ) : (
+          <Button
+            onClick={() => {
+              goTo(index + 1);
+            }}
+          >
+            Next
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
-function Block({ block, result }: { block: GuideBlock; result: GenerateSuccess }) {
+function Block({ block, section }: { block: GuideBlock; section: GuideSection }) {
+  const { result } = section;
   switch (block.kind) {
     case "text":
       return (
@@ -191,7 +208,7 @@ function Block({ block, result }: { block: GuideBlock; result: GenerateSuccess }
             <tbody className="font-mono text-xs">
               {result.files.map((file) => (
                 <tr key={file.archivePath} className="border-b last:border-0">
-                  <td className="py-1 pr-4 break-all">{file.archivePath}</td>
+                  <td className="py-1 pr-4 break-all">{zipPath(section, file.archivePath)}</td>
                   <td className="py-1 break-all">{file.destinationPath}</td>
                 </tr>
               ))}

@@ -1,8 +1,9 @@
 import type { z } from "zod";
-import type { GenerateRequest } from "@/lib/validation/requests";
+import type { GenerateRequest, ProjectMode } from "@/lib/validation/requests";
 import {
   generateResponseSchema,
   validateResponseSchema,
+  type ArchiveRequest,
   type FailureResponse,
   type GenerateResponse,
   type GenerateSuccess,
@@ -33,14 +34,18 @@ export function requestGeneration(
 }
 
 /**
- * Asks the server to build the ZIP for a generation result. Returns the ZIP,
- * or undefined when the server did not send one.
+ * Asks the server to build one ZIP for the successful results of a generation
+ * run. Returns the ZIP, or undefined when the server did not send one.
  */
-export async function requestArchive(result: GenerateSuccess): Promise<Blob | undefined> {
+export async function requestArchive(
+  results: readonly GenerateSuccess[],
+  project: ProjectMode,
+): Promise<Blob | undefined> {
+  const request: ArchiveRequest = { results: [...results], project };
   const response = await fetch("/api/archive", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(result),
+    body: JSON.stringify(request),
   });
   if (!response.ok || response.headers.get("content-type") !== "application/zip") return undefined;
   const bytes = await response.arrayBuffer();

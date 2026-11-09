@@ -1,21 +1,28 @@
 "use client";
 
-import { useId, useState, type ChangeEvent, type SubmitEvent } from "react";
+import { useId, useRef, useState, type ChangeEvent, type SubmitEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { formatMegabytes, MAX_SPEC_BYTES } from "@/lib/validation/limits";
 
 interface SpecInputProps {
   value: string;
   onChange: (value: string) => void;
-  onValidate: () => void;
+  /** Called with the specification to check: after a paste, an upload, or "Continue". */
+  onSubmit: (value: string) => void;
   isValidating: boolean;
 }
 
-export function SpecInput({ value, onChange, onValidate, isValidating }: SpecInputProps) {
+/**
+ * Pasting or uploading a specification submits it right away. Typed changes
+ * are submitted with the "Continue" button.
+ */
+export function SpecInput({ value, onChange, onSubmit, isValidating }: SpecInputProps) {
   const textareaId = useId();
   const fileId = useId();
   const hintId = useId();
   const [fileError, setFileError] = useState<string | undefined>();
+  // Set by the paste event, which fires before the textarea's change event.
+  const pasted = useRef(false);
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -34,6 +41,7 @@ export function SpecInput({ value, onChange, onValidate, isValidating }: SpecInp
       const text = await file.text();
       setFileError(undefined);
       onChange(text);
+      onSubmit(text);
     } catch {
       setFileError("The file could not be read.");
     }
@@ -41,7 +49,7 @@ export function SpecInput({ value, onChange, onValidate, isValidating }: SpecInp
 
   const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onValidate();
+    onSubmit(value);
   };
 
   return (
@@ -51,14 +59,27 @@ export function SpecInput({ value, onChange, onValidate, isValidating }: SpecInp
       </label>
       <p id={hintId} className="text-muted-foreground text-sm">
         Paste an OpenAPI 3.0.x document in JSON, or upload a .json file (up to{" "}
-        {formatMegabytes(MAX_SPEC_BYTES)}). It is only used for this generation and never stored.
+        {formatMegabytes(MAX_SPEC_BYTES)}). It is checked as soon as you paste or upload it, and it
+        is only used for this generation and never stored.
       </p>
       <textarea
         id={textareaId}
         aria-describedby={hintId}
         value={value}
+        onPaste={() => {
+          pasted.current = true;
+          // A paste that changes nothing fires no change event; forget it afterwards.
+          setTimeout(() => {
+            pasted.current = false;
+          }, 0);
+        }}
         onChange={(event) => {
-          onChange(event.target.value);
+          const text = event.target.value;
+          onChange(text);
+          if (pasted.current) {
+            pasted.current = false;
+            onSubmit(text);
+          }
         }}
         spellCheck={false}
         rows={12}
@@ -67,7 +88,7 @@ export function SpecInput({ value, onChange, onValidate, isValidating }: SpecInp
       />
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={isValidating}>
-          {isValidating ? "Validating…" : "Validate specification"}
+          {isValidating ? "Validating…" : "Continue"}
         </Button>
         <label htmlFor={fileId} className="text-sm">
           or upload a file:

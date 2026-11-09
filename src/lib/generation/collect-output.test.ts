@@ -65,6 +65,35 @@ describe("collectOutput", () => {
     ]);
   });
 
+  it("drops the generic arity from C# file names", async () => {
+    await writeOutput("src/ApiClient/Client/ApiResponse`1.cs", "generic");
+    await writeOutput("src/ApiClient/Client/TokenBase.cs");
+
+    const files = await collectOutput(outputDir, resolveTarget({ target: "csharp" }));
+    expect(files.map((file) => [file.archivePath, file.destinationPath, file.content])).toEqual([
+      ["ApiClient/Client/ApiResponse.cs", "src/ApiClient/Client/ApiResponse.cs", "generic"],
+      ["ApiClient/Client/TokenBase.cs", "src/ApiClient/Client/TokenBase.cs", "x"],
+    ]);
+  });
+
+  it("keeps the generic arity where dropping it would clash with another file", async () => {
+    await writeOutput("src/ApiClient/Client/Option.cs");
+    await writeOutput("src/ApiClient/Client/Option`1.cs");
+
+    const files = await collectOutput(outputDir, resolveTarget({ target: "csharp" }));
+    expect(files.map((file) => file.archivePath)).toEqual([
+      "ApiClient/Client/Option.cs",
+      "ApiClient/Client/Option`1.cs",
+    ]);
+  });
+
+  it("keeps TypeScript file names as generated", async () => {
+    await writeOutput("models/Page`1.ts");
+
+    const files = await collectOutput(outputDir, typescript);
+    expect(files.map((file) => file.archivePath)).toEqual(["api-client/models/Page`1.ts"]);
+  });
+
   it("ignores symbolic links", async () => {
     await writeOutput("index.ts");
     const outside = join(tmpdir(), "scrapi-outside-target.ts");

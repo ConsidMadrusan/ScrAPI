@@ -20,6 +20,14 @@ export const HTTP_CLIENTS = ["axios", "fetch"] as const;
 export const httpClientSchema = z.enum(HTTP_CLIENTS);
 export type HttpClient = z.infer<typeof httpClientSchema>;
 
+/**
+ * Whether the generated code goes into an existing project or a new one. It
+ * changes only the guide (and INTEGRATION.md), never the generated files.
+ */
+export const PROJECT_MODES = ["existing", "new"] as const;
+export const projectModeSchema = z.enum(PROJECT_MODES);
+export type ProjectMode = z.infer<typeof projectModeSchema>;
+
 /** Per-target options. Only the shared TypeScript targets choose an HTTP client. */
 export const generationOptionsSchema = z.discriminatedUnion("target", [
   z.object({ target: z.literal("csharp") }),

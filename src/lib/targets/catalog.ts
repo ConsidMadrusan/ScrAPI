@@ -61,3 +61,41 @@ export function optionsFor(target: TargetId, httpClient: HttpClient): Generation
       return { target };
   }
 }
+
+/** Every supported framework combination, in the order they are generated and shown. */
+export const COMBINATIONS: readonly GenerationOptions[] = [
+  { target: "typescript-next", httpClient: "axios" },
+  { target: "typescript-next", httpClient: "fetch" },
+  { target: "typescript-nuxt", httpClient: "axios" },
+  { target: "typescript-nuxt", httpClient: "fetch" },
+  { target: "typescript-angular" },
+  { target: "csharp" },
+];
+
+const TARGET_SLUGS: Record<TargetId, string> = {
+  "typescript-next": "nextjs",
+  "typescript-nuxt": "nuxt",
+  "typescript-angular": "angular",
+  csharp: "csharp",
+};
+
+/**
+ * Stable identifier of a framework combination, e.g. `nextjs-axios`. Also the
+ * name of the combination's folder in the ZIP.
+ */
+export function combinationKey(options: GenerationOptions): string {
+  const slug = TARGET_SLUGS[options.target];
+  return "httpClient" in options ? `${slug}-${options.httpClient}` : slug;
+}
+
+/** Display name of a framework combination, e.g. `TypeScript for Next.js / React (axios)`. */
+export function combinationLabel(options: GenerationOptions): string {
+  const label = TARGETS.find((target) => target.id === options.target)?.label ?? options.target;
+  return "httpClient" in options ? `${label} (${HTTP_CLIENT_LABELS[options.httpClient].label})` : label;
+}
+
+/** Combinations in the order of `COMBINATIONS`, without duplicates. */
+export function sortCombinations(combinations: readonly GenerationOptions[]): GenerationOptions[] {
+  const keys = new Set(combinations.map(combinationKey));
+  return COMBINATIONS.filter((options) => keys.has(combinationKey(options)));
+}

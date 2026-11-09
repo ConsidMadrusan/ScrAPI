@@ -3,7 +3,7 @@ import "server-only";
 import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { isSafeArchivePath } from "@/lib/archive/safe-path";
-import { toArchivePath, toDestinationPath, type TargetConfig } from "@/lib/targets/config";
+import { toArchivePath, toDestinationPath, withoutGenericArity, type TargetConfig } from "@/lib/targets/config";
 import { MAX_OUTPUT_BYTES, MAX_OUTPUT_FILES } from "@/lib/validation/limits";
 import type { GeneratedFile } from "@/lib/validation/responses";
 
@@ -21,9 +21,14 @@ export async function collectOutput(outputDir: string, target: TargetConfig): Pr
   const files: GeneratedFile[] = [];
   let totalBytes = 0;
 
-  for (const outputPath of await listFiles(outputDir)) {
+  const kept = (await listFiles(outputDir)).flatMap((outputPath) => {
     const archivePath = toArchivePath(target, outputPath);
-    if (archivePath === undefined || !isSafeArchivePath(archivePath)) continue;
+    return archivePath === undefined || !isSafeArchivePath(archivePath) ? [] : [{ outputPath, archivePath }];
+  });
+  const rename = renamer(target, kept.map((file) => file.archivePath));
+
+  for (const { outputPath, archivePath: generatedPath } of kept) {
+    const archivePath = rename(generatedPath);
 
     const absolutePath = join(outputDir, ...outputPath.split("/"));
     totalBytes += (await stat(absolutePath)).size;
@@ -38,6 +43,23 @@ export async function collectOutput(outputDir: string, target: TargetConfig): Pr
   }
 
   return files.sort((a, b) => (a.archivePath < b.archivePath ? -1 : 1));
+}
+
+/**
+ * Final archive path of each kept file: generic-type names lose their arity
+ * suffix where the target asks for it, unless that would clash with another file.
+ */
+function renamer(target: TargetConfig, archivePaths: readonly string[]): (archivePath: string) => string {
+  if (target.dropGenericArity !== true) return (archivePath) => archivePath;
+  const counts = new Map<string, number>();
+  for (const path of archivePaths) {
+    const renamed = withoutGenericArity(path);
+    counts.set(renamed, (counts.get(renamed) ?? 0) + 1);
+  }
+  return (archivePath) => {
+    const renamed = withoutGenericArity(archivePath);
+    return counts.get(renamed) === 1 ? renamed : archivePath;
+  };
 }
 
 /**

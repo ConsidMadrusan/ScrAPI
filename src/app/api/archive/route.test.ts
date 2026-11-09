@@ -1,15 +1,18 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
+import { ARCHIVE_FILE_NAME } from "@/lib/archive/names";
+import { renderChainedGuide } from "@/lib/guides/chained";
 import { GUIDE_FILE_NAME, renderGuideMarkdown } from "@/lib/guides/markdown";
-import { renderGuide } from "@/lib/guides/render";
 import {
   MAX_ARCHIVE_REQUEST_BYTES,
+  MAX_COMBINATIONS,
   MAX_CONCURRENT_ARCHIVES,
   MAX_OUTPUT_BYTES,
   MAX_OUTPUT_FILES,
 } from "@/lib/validation/limits";
 import { failureResponseSchema } from "@/lib/validation/responses";
-import { generationResult } from "@/test/generation-fixtures";
+import type { GenerateSuccess } from "@/lib/validation/responses";
+import { ALL_OPTIONS, generationResult } from "@/test/generation-fixtures";
 import { POST } from "./route";
 
 function post(body: string, headers: Record<string, string> = {}): Promise<Response> {
@@ -24,26 +27,68 @@ function post(body: string, headers: Record<string, string> = {}): Promise<Respo
 
 const result = generationResult({ target: "typescript-next", httpClient: "axios" });
 
+/** A ZIP request body with the given results (by default only `result`). */
+function body(...results: unknown[]): string {
+  return JSON.stringify({ results: results.length > 0 ? results : [result], project: "existing" });
+}
+
 describe("POST /api/archive", () => {
-  it("returns a ZIP with the result's files and the guide rendered from the same result", async () => {
-    const response = await post(JSON.stringify(result));
+  it("returns one ZIP with a folder per combination and the guide rendered from the same results", async () => {
+    const results: GenerateSuccess[] = [result, generationResult({ target: "csharp" })];
+
+    const response = await post(body(...results));
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/zip");
-    expect(response.headers.get("content-disposition")).toBe(
-      `attachment; filename="${result.archiveRoot}.zip"`,
-    );
+    expect(response.headers.get("content-disposition")).toBe(`attachment; filename="${ARCHIVE_FILE_NAME}"`);
     const zip = await JSZip.loadAsync(await response.arrayBuffer());
-    for (const file of result.files) {
-      expect(await zip.file(file.archivePath)?.async("string")).toBe(file.content);
+    for (const [folder, item] of [["nextjs-axios", result], ["csharp", results[1]]] as const) {
+      for (const file of item?.files ?? []) {
+        expect(await zip.file(`${folder}/${file.archivePath}`)?.async("string")).toBe(file.content);
+      }
     }
     expect(await zip.file(GUIDE_FILE_NAME)?.async("string")).toBe(
-      renderGuideMarkdown(renderGuide(result), result),
+      renderGuideMarkdown(renderChainedGuide(results, "existing")),
     );
   });
 
+  it("puts the guide for new projects in the ZIP when asked", async () => {
+    const response = await post(JSON.stringify({ results: [result], project: "new" }));
+
+    const zip = await JSZip.loadAsync(await response.arrayBuffer());
+    const guide = await zip.file(GUIDE_FILE_NAME)?.async("string");
+    expect(guide).toBe(renderGuideMarkdown(renderChainedGuide([result], "new")));
+    expect(guide).toContain("npx create-next-app@16");
+  });
+
+  it("accepts every combination at once", async () => {
+    const response = await post(body(...ALL_OPTIONS.map((options) => generationResult(options))));
+
+    expect(response.status).toBe(200);
+  });
+
+  it.each([
+    ["no results", JSON.stringify({ results: [] })],
+    ["too many results", JSON.stringify({ results: Array.from({ length: MAX_COMBINATIONS + 1 }, () => result) })],
+    ["a bare result", JSON.stringify(result)],
+    ["no project mode", JSON.stringify({ results: [result] })],
+    ["an unknown project mode", JSON.stringify({ results: [result], project: "template" })],
+  ])("rejects a body with %s", async (_name, invalid) => {
+    const response = await post(invalid);
+
+    expect(response.status).toBe(400);
+    expect(failureResponseSchema.parse(await response.json()).errors[0]?.code).toBe("invalid-request");
+  });
+
+  it("rejects the same combination twice", async () => {
+    const response = await post(body(result, result));
+
+    expect(response.status).toBe(422);
+    expect(failureResponseSchema.parse(await response.json()).errors[0]?.code).toBe("duplicate-combination");
+  });
+
   it("rejects bodies that are not a generation result", async () => {
-    const response = await post(JSON.stringify({ ...result, files: [] }));
+    const response = await post(body({ ...result, files: [] }));
 
     expect(response.status).toBe(400);
     expect(failureResponseSchema.parse(await response.json()).errors[0]?.code).toBe("invalid-request");
@@ -54,7 +99,7 @@ describe("POST /api/archive", () => {
     async (archivePath) => {
       const unsafe = { ...result, files: [{ archivePath, destinationPath: "x", content: "" }] };
 
-      const response = await post(JSON.stringify(unsafe));
+      const response = await post(body(unsafe));
 
       expect(response.status).toBe(422);
       expect(failureResponseSchema.parse(await response.json()).errors[0]?.code).toBe(
@@ -75,7 +120,7 @@ describe("POST /api/archive", () => {
       { ...result, files: [{ archivePath: "api-client/x.ts", destinationPath: "elsewhere/x.ts", content: "" }] },
     ],
   ])("rejects a result whose %s does not match the target configuration", async (_name, mismatched) => {
-    const response = await post(JSON.stringify(mismatched));
+    const response = await post(body(mismatched));
 
     expect(response.status).toBe(422);
     expect(failureResponseSchema.parse(await response.json()).errors[0]?.code).toBe("result-mismatch");
@@ -88,7 +133,7 @@ describe("POST /api/archive", () => {
       content: "",
     }));
 
-    const response = await post(JSON.stringify({ ...result, files }));
+    const response = await post(body({ ...result, files }));
 
     expect(response.status).toBe(400);
   });
@@ -101,7 +146,7 @@ describe("POST /api/archive", () => {
       content: half,
     }));
 
-    const response = await post(JSON.stringify({ ...result, files }));
+    const response = await post(body({ ...result, files }));
 
     expect(response.status).toBe(413);
     expect(failureResponseSchema.parse(await response.json()).errors[0]?.code).toBe("too-large");
@@ -127,16 +172,16 @@ describe("POST /api/archive", () => {
       return { response, controller };
     });
 
-    const busy = await post(JSON.stringify(result));
+    const busy = await post(body());
     expect(busy.status).toBe(503);
     expect(failureResponseSchema.parse(await busy.json()).errors[0]?.code).toBe("archive-busy");
 
     for (const { controller } of open) {
-      controller?.enqueue(encoder.encode(JSON.stringify(result)));
+      controller?.enqueue(encoder.encode(body()));
       controller?.close();
     }
     for (const { response } of open) expect((await response).status).toBe(200);
-    expect((await post(JSON.stringify(result))).status).toBe(200);
+    expect((await post(body())).status).toBe(200);
   });
 
   it("rejects bodies over the size limit before reading them", async () => {

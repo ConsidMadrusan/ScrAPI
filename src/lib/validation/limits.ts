@@ -17,8 +17,17 @@ export const MAX_OUTPUT_FILES = 2_000;
 export const MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
 
 /**
- * Largest accepted ZIP request: a generation result sent back for archiving.
- * Generated output is capped at 20 MB; this leaves room for JSON escaping.
+ * Largest total size of all results combined into one ZIP, in UTF-8 bytes.
+ * Kept at the single-result limit so a ZIP request needs no more memory than before.
+ */
+export const MAX_COMBINED_OUTPUT_BYTES = MAX_OUTPUT_BYTES;
+
+/** Most framework combinations generated and archived together (every supported one). */
+export const MAX_COMBINATIONS = 6;
+
+/**
+ * Largest accepted ZIP request: the generation results sent back for archiving.
+ * Their combined output is capped at 20 MB; this leaves room for JSON escaping.
  */
 export const MAX_ARCHIVE_REQUEST_BYTES = 48 * 1024 * 1024;
 

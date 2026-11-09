@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { GenerationOptions } from "@/lib/validation/requests";
 import { ALL_OPTIONS, generationResult, TODO_OPERATIONS } from "@/test/generation-fixtures";
+import { combinationKey } from "@/lib/targets/catalog";
+import { renderChainedGuide } from "./chained";
 import { renderGuideMarkdown } from "./markdown";
 import { renderGuide } from "./render";
 import type { Guide, GuideBlock } from "./types";
@@ -19,14 +22,16 @@ describe("renderGuide", () => {
   it.each(ALL_OPTIONS)("covers every generated file exactly once for %j", (options) => {
     const result = generationResult(options);
     const guide = renderGuide(result);
-    const markdown = renderGuideMarkdown(guide, result);
+    const markdown = renderGuideMarkdown(renderChainedGuide([result]));
+    const folder = combinationKey(options);
 
     const mappingRows = markdown.split("\n").filter((line) => line.startsWith("| `"));
     expect(mappingRows).toEqual(
-      result.files.map((file) => `| \`${file.archivePath}\` | \`${file.destinationPath}\` |`),
+      result.files.map((file) => `| \`${folder}/${file.archivePath}\` | \`${file.destinationPath}\` |`),
     );
+    expect(markdown).toContain(`find the \`${folder}/${result.archiveRoot}\` folder`);
     expect(blocks(guide).filter((block) => block.kind === "files")).toHaveLength(1);
-    expect(markdown).toContain(`to \`${result.destinationRoot}/\``);
+    expect(markdown).toContain(`The folder is now \`${result.destinationRoot}/\``);
   });
 
   it.each(ALL_OPTIONS)("calls a method that exists in the generated files for %j", (options) => {
@@ -148,5 +153,65 @@ describe("name conversion", () => {
   ])("%s", (input, camel, pascal) => {
     expect(camelCase(input)).toBe(camel);
     expect(pascalCase(input)).toBe(pascal);
+  });
+});
+
+describe("the files step", () => {
+  it.each([
+    [{ target: "typescript-next", httpClient: "axios" }, "src/lib", "src/lib/api-client/index.ts", "package.json"],
+    [{ target: "typescript-nuxt", httpClient: "fetch" }, "app/lib", "app/lib/api-client/index.ts", "package.json"],
+    [{ target: "typescript-angular" }, "src/app", "src/app/api-client/index.ts", "package.json"],
+    [{ target: "csharp" }, "src", "src/ApiClient/ApiClient.csproj", ".slnx"],
+  ] as const)("says where %j goes and how to check it", (options, parent, check, root) => {
+    const step = renderGuide(generationResult(options)).steps.find((candidate) => candidate.title === "Add the generated files");
+    const text = JSON.stringify(step?.blocks);
+
+    expect(text).toContain(`into the \`${parent}/\` folder of your`);
+    expect(text).toContain(root);
+    expect(text).toContain(`\`${check}\` exists`);
+  });
+});
+
+describe("guides for a new project", () => {
+  const CREATE: [GenerationOptions, string][] = [
+    [{ target: "typescript-next", httpClient: "axios" }, "npx create-next-app@16 nextjs-axios-app"],
+    [{ target: "typescript-nuxt", httpClient: "fetch" }, "npx create-nuxt@4 nuxt-fetch-app"],
+    [{ target: "typescript-angular" }, "npx @angular/cli@22 new angular-app --defaults"],
+    [{ target: "csharp" }, "dotnet new sln -n MyApp -o MyApp"],
+  ];
+
+  it.each(CREATE)("starts %j by creating the project", (options, command) => {
+    const guide = renderGuide(generationResult(options), { project: "new" });
+    const [first] = guide.steps;
+
+    expect(first?.title).toMatch(/^Create the /);
+    const commands = first?.blocks.flatMap((block) => (block.kind === "command" ? [block.command] : []));
+    expect(commands?.[0]?.startsWith(command)).toBe(true);
+    expect(guide.steps.slice(1)).toHaveLength(renderGuide(generationResult(options)).steps.length - 1);
+  });
+
+  it.each(ALL_OPTIONS)("refers to the created project instead of placeholders for %j", (options) => {
+    const guide = renderGuide(generationResult(options), { project: "new" });
+
+    expect(guide.placeholders.map((placeholder) => placeholder.token)).toEqual(["<YOUR_API_BASE_URL>"]);
+    expect(JSON.stringify(guide)).not.toContain("<YourProject>");
+    expect(JSON.stringify(guide)).toContain("folder you created");
+  });
+
+  it("uses the created Web API project in every C# step", () => {
+    const guide = renderGuide(generationResult({ target: "csharp" }), { project: "new" });
+    const commands = blocks(guide).flatMap((block) => (block.kind === "command" ? [block.command] : []));
+    const files = blocks(guide).flatMap((block) => (block.kind === "code" ? [block.file] : []));
+
+    expect(commands).toContain("dotnet new webapi -n MyApp.Api -o src/MyApp.Api -f net10.0");
+    expect(commands).toContain("dotnet add src/MyApp.Api/MyApp.Api.csproj reference src/ApiClient/ApiClient.csproj");
+    expect(files).toEqual(["src/MyApp.Api/Program.cs", "src/MyApp.Api/TodosApiExample.cs"]);
+  });
+
+  it("keeps the existing-project guide unchanged by default", () => {
+    const result = generationResult({ target: "csharp" });
+
+    expect(renderGuide(result)).toEqual(renderGuide(result, { project: "existing" }));
+    expect(renderGuide(result).steps[0]?.title).toBe("Check your project setup");
   });
 });

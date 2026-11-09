@@ -2,7 +2,7 @@
 
 Generate typed API clients from OpenAPI specifications, choose exactly which endpoints you need, and get a step-by-step guide for adding the code to your existing project.
 
-> **Status: MVP complete, not yet released.** The full workflow works: validate a specification, choose a target, select operations, generate code, download a ZIP, and follow the integration guide. The Docker image builds and runs. No version has been tagged or published yet.
+> **Status: MVP complete, not yet released.** The full workflow works: provide a specification, select operations, choose one or more framework combinations, generate code, download one ZIP, and follow the integration guide. The Docker image builds and runs. No version has been tagged or published yet.
 
 ## Demo
 
@@ -16,12 +16,15 @@ ScrAPI wraps existing deterministic generators in a focused workflow: pick the e
 
 ## User workflow
 
-1. **Provide a specification**: paste OpenAPI JSON or upload a `.json` file.
-2. **Validate**: ScrAPI checks that the input is well-formed JSON, a supported OpenAPI version (3.0.x), valid according to the OpenAPI standard, and self-contained. Errors are reported in plain language.
-3. **Choose a target**: C#/.NET, TypeScript for Next.js/React, TypeScript for Nuxt/Vue, or TypeScript for Angular.
-4. **Select operations**: choose which endpoints to generate.
-5. **Generate**: ScrAPI runs an existing generator on the server and produces typed integration files.
-6. **Integrate**: download a ZIP, or follow the visual step-by-step guide to copy the files into your project manually.
+Each stage has its own page; the workflow moves to the next one when the current stage is complete.
+
+1. **Provide a specification** (`/`): paste OpenAPI JSON or upload a `.json` file. ScrAPI validates it as soon as it is pasted or uploaded (typed input is checked with **Continue**): well-formed JSON, a supported OpenAPI version (3.0.x), valid according to the OpenAPI standard, and self-contained. Errors are reported in plain language; a valid specification opens the next stage.
+2. **Select endpoints** (`/select`): choose which operations to generate, then press **Next**.
+3. **Choose frameworks** (`/targets`): choose whether the code goes into an **existing project** or a **new project**, and pick one or more framework combinations: TypeScript for Next.js/React or Nuxt/Vue (each with the `axios` and/or `fetch` HTTP client), TypeScript for Angular, and C#/.NET. Press **Generate**. For a new project, the guide starts with the official CLI commands that create it (`create-next-app`, `create-nuxt`, the Angular CLI, or `dotnet new` for a solution with an ASP.NET Core Web API project); every later step then uses that project's paths.
+4. **Generate** (`/generating`): a loading screen shows the progress of each combination while ScrAPI runs an existing generator on the server, one combination at a time.
+5. **Implement** (`/implement`): a landing screen with two choices. **Download ZIP** starts the download of one ZIP with every generated client, and the card then shows that the ZIP was downloaded (with a link to download it again). **Step-by-step guide** opens `/implement/guide`: an onboarding-style flow with one step at a time, a progress bar, and Back/Next, covering every combination in turn; **Finish** returns to the landing screen. If some combinations failed, the others are still available and each failed one can be retried.
+
+The workflow state lives in the browser tab only. Reloading a later stage returns you to the start.
 
 ScrAPI never writes into your project. You copy the files or extract the ZIP yourself.
 
@@ -66,11 +69,11 @@ ScrAPI does **not** generate UI, React hooks, Vue composables, framework-specifi
 
 ## ZIP download and visual integration guide
 
-Both delivery options are built from the **same generation result**, so file paths and contents always match.
+Both delivery options are built from the **same generation results**, so file paths and contents always match.
 
-**Download ZIP** contains the generated folder structure and integration instructions.
+**Download ZIP** (`scrapi-clients.zip`) contains one folder per framework combination (`nextjs-axios/`, `nextjs-fetch/`, `nuxt-axios/`, `nuxt-fetch/`, `angular/`, `csharp/`), each holding that combination's generated folder, plus one `INTEGRATION.md` with the steps for every combination.
 
-**Step-by-step guide** walks you through adding the generated code manually:
+**Step-by-step guide** walks you through adding the generated code manually, one step at a time and one combination after another:
 
 - The supported project setup, versions, and assumptions for the target.
 - A visual folder tree showing where generated files belong.
@@ -80,7 +83,7 @@ Both delivery options are built from the **same generation result**, so file pat
 - Required dependencies and configuration changes, consistent with the generated output.
 - A minimal example that imports and calls one of your selected operations. Values you must supply (base URL, tokens, IDs) are clearly marked. Nothing is invented.
 - Basic verification steps and common integration errors.
-- Previous/next navigation and a visible step indicator.
+- Back/next navigation, a progress bar, and a visible step indicator.
 
 Guides are deterministic templates per target, not AI-generated. They document one supported project layout per target and do not claim to fit every project. They separate _adding new files_ from _small changes to existing configuration_, and never ask you to replace existing application files wholesale.
 
@@ -101,7 +104,7 @@ Not guaranteed:
 
 Included:
 
-- One specification and one output target per generation.
+- One specification and one or more framework combinations per generation.
 - JSON input only (paste or `.json` upload).
 - OpenAPI 3.0.x, explicitly documented. Other versions are rejected with a clear error until support is verified.
 - Self-contained specifications with internal references (`#/components/...`).
@@ -158,8 +161,8 @@ A single Next.js application with clearly separated responsibilities:
 - **Operation selection**: lists operations keyed by method + path, groups them by tag, and produces a filtered copy of the specification containing selected operations plus all transitively required components.
 - **Generation orchestration**: creates a per-request temp directory, runs the generator with fixed arguments and limits, collects output, and always cleans up.
 - **Target adapters**: one centralized configuration per target (generator and options, output layout, destination mapping, guide template). Next.js/React and Nuxt/Vue share the TypeScript generation path.
-- **Archive handling**: builds the ZIP from the generation result, rejecting unsafe paths.
-- **Integration-guide templates**: deterministic per-target templates rendered from the same generation result as the ZIP.
+- **Archive handling**: builds one ZIP from the generation results, one folder per framework combination, rejecting unsafe paths and duplicate combinations.
+- **Integration-guide templates**: deterministic per-target templates rendered from the same generation results as the ZIP, chained into one guide.
 
 Operations are identified by HTTP method and path, never only by `operationId`, which may be missing or duplicated.
 
@@ -273,7 +276,7 @@ Optional polish that can be deferred if time runs short (without dropping requir
 - OpenAPI 3.1 and Swagger 2.0 support (after verification).
 - YAML input.
 - External file and URL references.
-- Generating several targets or specifications at once.
+- Generating several specifications at once.
 - Generated React hooks, Vue composables, and framework-specific SSR integrations.
 - Generated Zod schemas or runtime response validation.
 - Accounts, saved history, collaboration, and sharing.
