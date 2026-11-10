@@ -15,22 +15,30 @@ export async function POST(request: Request): Promise<Response> {
   const input = validateRequestSchema.safeParse(body.value);
   if (!input.success) return failure(400, problemsFromZod(input.error));
 
-  const result = await validateSpecification(input.data.spec);
-  if (!result.ok) return failure(specFailureStatus(result.errors), result.errors);
+  try {
+    const result = await validateSpecification(input.data.spec);
+    if (!result.ok) return failure(specFailureStatus(result.errors), result.errors);
 
-  const { document, operations } = result.value;
-  const info = isJsonObject(document.info) ? document.info : {};
-  const response: ValidateSuccess = {
-    ok: true,
-    info: {
-      title: typeof info.title === "string" ? info.title : "Untitled API",
-      version: typeof info.version === "string" ? info.version : "",
-      openapi: typeof document.openapi === "string" ? document.openapi : "",
-    },
-    operations,
-    groups: groupByTag(document, operations),
-  };
-  return Response.json(response);
+    const { document, operations, text, conversions } = result.value;
+    const info = isJsonObject(document.info) ? document.info : {};
+    const response: ValidateSuccess = {
+      ok: true,
+      spec: text,
+      conversions,
+      info: {
+        title: typeof info.title === "string" ? info.title : "Untitled API",
+        version: typeof info.version === "string" ? info.version : "",
+        openapi: typeof document.openapi === "string" ? document.openapi : "",
+      },
+      operations,
+      groups: groupByTag(document, operations),
+    };
+    return Response.json(response);
+  } catch (error) {
+    // Unexpected server problem: report its type only, never details or content.
+    console.error("Validation crashed", { error: error instanceof Error ? error.name : typeof error });
+    return failure(500, [{ code: "internal", message: "Something went wrong while validating. Try again." }]);
+  }
 }
 
 function failure(status: number, errors: Problem[]): Response {

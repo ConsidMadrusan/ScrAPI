@@ -1,5 +1,5 @@
 import type { GenerationOptions } from "@/lib/validation/requests";
-import type { GenerateSuccess, OperationSummary } from "@/lib/validation/responses";
+import type { OpenApiGenerateSuccess, OperationSummary } from "@/lib/validation/responses";
 
 /** Test support: generation results whose files contain declarations copied from real 7.26.0 output. */
 
@@ -77,7 +77,7 @@ export const ALL_OPTIONS: GenerationOptions[] = [
 export function generationResult(
   options: GenerationOptions,
   operations: OperationSummary[] = TODO_OPERATIONS,
-): GenerateSuccess {
+): OpenApiGenerateSuccess {
   const layout = LAYOUT[options.target];
   return {
     ok: true,

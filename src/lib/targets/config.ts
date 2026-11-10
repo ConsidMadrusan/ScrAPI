@@ -83,6 +83,8 @@ function typescriptTarget(httpClient: "axios" | "fetch", destinationRoot: string
             apiPackage: "api",
             modelPackage: "model",
           },
+          // Makes model/index.ts a module when the selection uses no models.
+          templateDir: "generator-templates/typescript-axios",
         },
       };
     case "fetch":

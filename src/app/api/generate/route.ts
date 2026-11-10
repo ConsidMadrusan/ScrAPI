@@ -14,10 +14,10 @@ export async function POST(request: Request): Promise<Response> {
   const input = generateRequestSchema.safeParse(body.value);
   if (!input.success) return failure(400, problemsFromZod(input.error));
 
-  const prepared = await prepareGeneration(input.data);
-  if (!prepared.ok) return failure(specFailureStatus(prepared.errors), prepared.errors);
-
   try {
+    const prepared = await prepareGeneration(input.data);
+    if (!prepared.ok) return failure(specFailureStatus(prepared.errors), prepared.errors);
+
     const result = await generateClient(prepared.value, request.signal);
     if (!result.ok) return failure(result.status, result.errors);
     return Response.json(result.value);

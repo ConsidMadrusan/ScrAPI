@@ -1,0 +1,50 @@
+{
+  "swagger": "2.0",
+  "info": { "title": "Todo API", "version": "1.0.0", "description": "Small Swagger 2.0 sample: the todo API with a body parameter, a path parameter, a query enum, and API key security." },
+  "host": "todo.example.com",
+  "basePath": "/",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "securityDefinitions": { "apiKey": { "type": "apiKey", "in": "header", "name": "X-Api-Key" } },
+  "security": [{ "apiKey": [] }],
+  "tags": [{ "name": "todos" }],
+  "paths": {
+    "/todos": {
+      "get": {
+        "tags": ["todos"], "operationId": "listTodos", "summary": "List todos",
+        "parameters": [{ "name": "status", "in": "query", "required": false, "type": "string", "enum": ["open", "done"] }],
+        "responses": { "200": { "description": "All todos", "schema": { "type": "array", "items": { "$ref": "#/definitions/Todo" } } } }
+      },
+      "post": {
+        "tags": ["todos"], "operationId": "createTodo", "summary": "Create a todo",
+        "parameters": [{ "name": "body", "in": "body", "required": true, "schema": { "$ref": "#/definitions/NewTodo" } }],
+        "responses": { "201": { "description": "The created todo", "schema": { "$ref": "#/definitions/Todo" } } }
+      }
+    },
+    "/todos/{todoId}": {
+      "parameters": [{ "name": "todoId", "in": "path", "required": true, "type": "integer", "format": "int64" }],
+      "get": {
+        "tags": ["todos"], "operationId": "getTodo", "summary": "Get a todo",
+        "responses": { "200": { "description": "The todo", "schema": { "$ref": "#/definitions/Todo" } } }
+      },
+      "delete": {
+        "tags": ["todos"], "operationId": "deleteTodo", "summary": "Delete a todo",
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    }
+  },
+  "definitions": {
+    "TodoStatus": { "type": "string", "enum": ["open", "done"] },
+    "NewTodo": {
+      "type": "object", "required": ["title"],
+      "properties": { "title": { "type": "string", "maxLength": 200 }, "status": { "$ref": "#/definitions/TodoStatus" }, "dueDate": { "type": "string", "format": "date" } }
+    },
+    "Todo": {
+      "allOf": [
+        { "$ref": "#/definitions/NewTodo" },
+        { "type": "object", "required": ["id"], "properties": { "id": { "type": "integer", "format": "int64" } } }
+      ]
+    }
+  }
+}

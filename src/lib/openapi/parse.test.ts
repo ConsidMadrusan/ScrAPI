@@ -1,8 +1,14 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MAX_SPEC_BYTES, MAX_SPEC_DEPTH } from "@/lib/validation/limits";
 import type { SpecResult } from "./errors";
 import type { JsonObject } from "./json";
 import { parseSpecification } from "./parse";
+
+function sample(name: string): string {
+  return readFileSync(join(process.cwd(), "samples/specs", name), "utf8");
+}
 
 function spec(extra: JsonObject = {}): string {
   return JSON.stringify({
@@ -70,6 +76,11 @@ describe("parseSpecification", () => {
     });
   });
 
+  it("counts lines from the start of the pasted text, including leading blank lines", () => {
+    const result = parseSpecification('\n\n  {\n  "openapi": "3.0.3",\n  info: {}\n}');
+    expect(result).toMatchObject({ ok: false, errors: [{ code: "not-json", location: "line 5, column 3" }] });
+  });
+
   it("explains a truncated document", () => {
     const result = parseSpecification('{"openapi": "3.0.3"');
     expect(result.ok).toBe(false);
@@ -85,21 +96,120 @@ describe("parseSpecification", () => {
     expect(errorCodes(result)).toEqual(["swagger-2"]);
   });
 
-  it("rejects a missing version", () => {
+  it("rejects a missing version and explains how to add it to an OpenAPI-shaped document", () => {
     const result = parseSpecification(JSON.stringify({ info: {}, paths: {} }));
-    expect(errorCodes(result)).toEqual(["missing-version"]);
+    expect(result).toMatchObject({
+      ok: false,
+      errors: [{ code: "missing-version", message: expect.stringContaining('"openapi": "3.0.3" or "openapi": "3.1.0"') as string }],
+    });
   });
 
-  it.each(["3.1.0", "3.0", "4.0.0", "3.0.x"])("rejects unsupported version %s", (version) => {
+  it("recognizes the official OpenAPI meta-schema and says what to paste instead", () => {
+    const metaSchema = {
+      id: "https://spec.openapis.org/oas/3.0/schema/2024-10-18",
+      $schema: "http://json-schema.org/draft-04/schema#",
+      type: "object",
+      required: ["openapi", "info", "paths"],
+      properties: { openapi: { type: "string" } },
+      definitions: { Info: { type: "object" } },
+    };
+    const result = parseSpecification(JSON.stringify(metaSchema));
+    expect(result).toMatchObject({
+      ok: false,
+      errors: [
+        {
+          code: "json-schema",
+          message: expect.stringContaining("defines the OpenAPI format itself") as string,
+        },
+      ],
+    });
+  });
+
+  it("recognizes other JSON Schema documents", () => {
+    const result = parseSpecification(JSON.stringify({ $schema: "https://json-schema.org/draft/2020-12/schema", type: "object" }));
+    expect(result).toMatchObject({
+      ok: false,
+      errors: [{ code: "json-schema", message: expect.stringContaining("This is a JSON Schema") as string }],
+    });
+  });
+
+  it("says that a document without OpenAPI fields is not a specification", () => {
+    const result = parseSpecification(JSON.stringify({ foo: 1 }));
+    expect(result).toMatchObject({
+      ok: false,
+      errors: [{ code: "missing-version", message: expect.stringContaining("not an OpenAPI specification") as string }],
+    });
+  });
+
+  it.each(['{"openapi": 3.0, "info": {}, "paths": {}}', '{"openapi": 3, "info": {}, "paths": {}}'])(
+    "rejects a version that is not a string: %s",
+    (text) => {
+      expect(parseSpecification(text)).toEqual({
+        ok: false,
+        errors: [
+          {
+            code: "invalid-version",
+            message: 'The "openapi" field must be a string such as "3.0.3", not a number.',
+            location: "openapi",
+          },
+        ],
+      });
+    },
+  );
+
+  it.each(["3.0.0", "3.0.4", "3.1.0", "3.1.2"])("accepts supported version %s", (version) => {
+    expect(parseSpecification(spec({ openapi: version })).ok).toBe(true);
+  });
+
+  it.each(["3.2.0", "3.0", "4.0.0", "3.0.x", "3.1"])("rejects unsupported version %s", (version) => {
     const result = parseSpecification(spec({ openapi: version }));
     expect(errorCodes(result)).toEqual(["unsupported-version"]);
   });
 
-  it("names OpenAPI 3.1 explicitly", () => {
-    const result = parseSpecification(spec({ openapi: "3.1.0" }));
+  it("says that OpenAPI 3.2 is not supported yet and names the supported versions", () => {
+    const result = parseSpecification(spec({ openapi: "3.2.0" }));
     expect(result.ok ? "" : result.errors[0]?.message).toBe(
-      "OpenAPI 3.1.0 is not supported yet. ScrAPI supports OpenAPI 3.0.x.",
+      "OpenAPI 3.2.0 is not supported yet. ScrAPI supports OpenAPI 3.0.x and 3.1.x.",
     );
+  });
+
+  it("accepts the 3.1 sample specification", () => {
+    expect(parseSpecification(sample("todo-3.1.json")).ok).toBe(true);
+  });
+
+  it.each(["$id", "$anchor", "$dynamicRef", "$dynamicAnchor"])(
+    "rejects the 3.1 schema keyword %s with its location",
+    (keyword) => {
+      const text = spec({
+        openapi: "3.1.0",
+        components: { schemas: { Todo: { type: "object", [keyword]: "todo" } } },
+      });
+      expect(parseSpecification(text)).toEqual({
+        ok: false,
+        errors: [
+          expect.objectContaining({
+            code: "unsupported-keyword",
+            location: `components › schemas › Todo › ${keyword}`,
+          }),
+        ],
+      });
+    },
+  );
+
+  it("does not mistake properties or example data named like 3.1 keywords for the keywords", () => {
+    const text = spec({
+      openapi: "3.1.0",
+      components: {
+        schemas: {
+          Item: {
+            type: "object",
+            properties: { $id: { type: "string" } },
+            example: { $anchor: "data" },
+          },
+        },
+      },
+    });
+    expect(parseSpecification(text).ok).toBe(true);
   });
 
   it("rejects external references with their location", () => {

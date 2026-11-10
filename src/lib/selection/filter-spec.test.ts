@@ -4,6 +4,8 @@ import SwaggerParser from "@apidevtools/swagger-parser";
 import { describe, expect, it } from "vitest";
 import { isJsonObject, type JsonObject, type JsonValue } from "@/lib/openapi/json";
 import { HTTP_METHODS, type OperationKey } from "@/lib/validation/operation";
+import { parseSpecification } from "@/lib/openapi/parse";
+import { checkAgainstOfficialSchema } from "@/lib/openapi/schema-check";
 import { filterSpec, SpecFilterError } from "./filter-spec";
 
 function loadSample(name: string): JsonObject {
@@ -58,6 +60,7 @@ async function validate(spec: JsonObject) {
 
 const library = deepFreeze(loadSample("library.json"));
 const todo = deepFreeze(loadSample("todo.json"));
+const todo31 = deepFreeze(loadSample("todo-3.1.json"));
 
 describe("filterSpec", () => {
   it("keeps one method of a shared path and its transitive schemas", () => {
@@ -259,5 +262,90 @@ describe("filterSpec", () => {
     it.each(cases)("$name: $selection.length operation(s), first $selection.0.method $selection.0.path", async ({ spec, selection }) => {
       await expect(validate(filterSpec(spec, selection))).resolves.toBeDefined();
     });
+  });
+
+  describe("OpenAPI 3.1", () => {
+    const todo31Operations: OperationKey[] = [
+      { method: "get", path: "/todos" },
+      { method: "post", path: "/todos" },
+      { method: "get", path: "/todos/{todoId}" },
+      { method: "put", path: "/todos/{todoId}" },
+      { method: "delete", path: "/todos/{todoId}" },
+    ];
+
+    it("inlines a path item referenced from components.pathItems and keeps only selected methods", () => {
+      const result = filterSpec(todo31, [{ method: "get", path: "/todos/{todoId}" }]);
+      const paths = result.paths as JsonObject;
+
+      expect(Object.keys(paths)).toEqual(["/todos/{todoId}"]);
+      const item = paths["/todos/{todoId}"] as JsonObject;
+      expect(item.$ref).toBeUndefined();
+      expect(Object.keys(item).sort()).toEqual(["get", "parameters"]);
+      expect(names(result, "pathItems")).toEqual([]);
+    });
+
+    it("lets fields next to a path item reference override the referenced ones", () => {
+      const spec = structuredClone<JsonObject>(todo31);
+      (spec.paths as JsonObject)["/todos/{todoId}"] = {
+        $ref: "#/components/pathItems/TodoItem",
+        summary: "Local summary",
+      };
+      const item = (filterSpec(spec, [{ method: "get", path: "/todos/{todoId}" }]).paths as JsonObject)[
+        "/todos/{todoId}"
+      ] as JsonObject;
+      expect(item.summary).toBe("Local summary");
+      expect(item.get).toBeDefined();
+    });
+
+    it("rejects a path item reference that does not resolve", () => {
+      const spec = structuredClone<JsonObject>(todo31);
+      (spec.paths as JsonObject)["/todos/{todoId}"] = { $ref: "#/components/pathItems/Missing" };
+      expect(() => filterSpec(spec, [{ method: "get", path: "/todos" }])).toThrow(
+        new SpecFilterError("The path item reference on /todos/{todoId} does not resolve."),
+      );
+    });
+
+    it("leaves out webhooks and keeps $defs inside kept schemas", () => {
+      const result = filterSpec(todo31, [{ method: "post", path: "/todos" }]);
+      expect(result.webhooks).toBeUndefined();
+      const newTodo = section(result, "schemas")?.NewTodo as JsonObject;
+      expect(Object.keys(newTodo.$defs as JsonObject)).toEqual(["Label"]);
+    });
+
+    it("keeps components referenced from 2020-12 keywords such as prefixItems and if/then/else", () => {
+      const spec = structuredClone<JsonObject>(todo31);
+      const schemas = section(spec, "schemas") as JsonObject;
+      schemas.Pair = { type: "array", prefixItems: [{ $ref: "#/components/schemas/First" }] };
+      schemas.First = { type: "string" };
+      schemas.Conditional = {
+        if: { $ref: "#/components/schemas/IfPart" },
+        then: { $ref: "#/components/schemas/ThenPart" },
+        else: { $ref: "#/components/schemas/ElsePart" },
+      };
+      schemas.IfPart = { type: "object" };
+      schemas.ThenPart = { type: "object" };
+      schemas.ElsePart = { type: "object" };
+      const newTodo = schemas.NewTodo as JsonObject;
+      newTodo.properties = {
+        ...(newTodo.properties as JsonObject),
+        pair: { $ref: "#/components/schemas/Pair" },
+        conditional: { $ref: "#/components/schemas/Conditional" },
+      };
+
+      const result = filterSpec(spec, [{ method: "post", path: "/todos" }]);
+
+      expect(names(result, "schemas")).toEqual(
+        expect.arrayContaining(["Conditional", "ElsePart", "First", "IfPart", "Pair", "ThenPart"]),
+      );
+    });
+
+    it.each(todo31Operations.map((operation) => [operation]))(
+      "produces a valid 3.1 specification for %o",
+      (operation) => {
+        const result = filterSpec(todo31, [operation]);
+        expect(parseSpecification(JSON.stringify(result)).ok).toBe(true);
+        expect(checkAgainstOfficialSchema(result, "3.1")).toEqual([]);
+      },
+    );
   });
 });

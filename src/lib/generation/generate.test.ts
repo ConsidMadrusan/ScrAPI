@@ -1,12 +1,26 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as FsPromises from "node:fs/promises";
 import type { GeneratorOutcome, GeneratorRun } from "./java-generator";
 import type { PreparedGeneration } from "./prepare";
 
 const runGeneratorMock = vi.hoisted(() => vi.fn<(run: GeneratorRun) => Promise<GeneratorOutcome>>());
 vi.mock("./java-generator", () => ({ runGenerator: runGeneratorMock }));
+
+/** Error codes that make the next temp-folder calls fail; unset means the real call runs. */
+const fsFailures = vi.hoisted(() => ({ mkdtemp: undefined as string | undefined, rm: undefined as string | undefined }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  const fail = (code: string) => Promise.reject(Object.assign(new Error(`${code}: /tmp/scrapi-x`), { code }));
+  return {
+    ...actual,
+    mkdtemp: (prefix: string) => (fsFailures.mkdtemp ? fail(fsFailures.mkdtemp) : actual.mkdtemp(prefix)),
+    rm: (path: string, options?: Parameters<typeof actual.rm>[1]) =>
+      fsFailures.rm ? fail(fsFailures.rm) : actual.rm(path, options),
+  };
+});
 
 const { generateClient } = await import("./generate");
 
@@ -24,6 +38,8 @@ let lastRun: GeneratorRun | undefined;
 
 beforeEach(() => {
   lastRun = undefined;
+  fsFailures.mkdtemp = undefined;
+  fsFailures.rm = undefined;
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
@@ -57,6 +73,7 @@ describe("generateClient", () => {
       ok: true,
       value: {
         ok: true,
+        kind: "openapi",
         options: prepared.options,
         archiveRoot: "api-client",
         destinationRoot: "src/lib/api-client",
@@ -132,5 +149,38 @@ describe("generateClient", () => {
     expect(logged).toContain("typescript-next");
     expect(logged).not.toContain("/todos");
     expect(logged).not.toContain("openapi");
+  });
+
+  it("reports unusable temp storage as a server problem without logging paths", async () => {
+    fsFailures.mkdtemp = "EROFS";
+    generatorThat(() => Promise.resolve({ status: "ok" }));
+
+    const result = await generateClient(prepared);
+
+    expect(result).toEqual({
+      ok: false,
+      status: 503,
+      errors: [expect.objectContaining({ code: "temp-storage-unavailable" })],
+    });
+    expect(lastRun).toBeUndefined();
+    const logged = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(logged).toContain("EROFS");
+    expect(logged).not.toContain("/tmp");
+  });
+
+  it("keeps a successful result when removing the temp folder fails", async () => {
+    generatorThat(async (run) => {
+      await mkdir(run.outputDir, { recursive: true });
+      await writeFile(join(run.outputDir, "index.ts"), "export {};");
+      fsFailures.rm = "EBUSY";
+      return { status: "ok" };
+    });
+
+    const result = await generateClient(prepared);
+
+    expect(result.ok).toBe(true);
+    expect(vi.mocked(console.warn)).toHaveBeenCalledWith("Temp folder cleanup failed", { code: "EBUSY" });
+    fsFailures.rm = undefined;
+    await rm(workDir(), { recursive: true, force: true });
   });
 });

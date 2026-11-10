@@ -6,13 +6,34 @@ import {
 } from "@/lib/validation/limits";
 import {
   formatLocation,
-  pointerSegments,
   type SpecError,
   type SpecResult,
 } from "./errors";
 import { isJsonObject, type JsonObject, type JsonValue } from "./json";
+import { resolveReference } from "./resolve";
+import { forEachObject } from "./walk";
 
-const SUPPORTED_VERSION = /^3\.0\.\d+$/;
+/**
+ * OpenAPI versions ScrAPI has verified end to end (validation, filtering,
+ * generation for every target, compiled output). 3.2 is rejected: OpenAPI
+ * Generator 7.26.0 cannot read it. Add a minor version only after verifying it.
+ */
+const SUPPORTED_VERSION = /^3\.([01])\.\d+$/;
+const SUPPORTED_DESCRIPTION = "OpenAPI 3.0.x and 3.1.x";
+
+export type OpenApiVersion = "3.0" | "3.1";
+
+/** The minor version of a document that passed `parseSpecification`. */
+export function openApiVersion(document: JsonObject): OpenApiVersion {
+  return typeof document.openapi === "string" && document.openapi.startsWith("3.1") ? "3.1" : "3.0";
+}
+
+/**
+ * JSON Schema identifier keywords that 3.1 schemas may use but ScrAPI does not
+ * support yet: references based on them cannot be checked or filtered, and
+ * the generator's handling of them is not verified.
+ */
+const UNSUPPORTED_31_KEYWORDS = ["$id", "$anchor", "$dynamicRef", "$dynamicAnchor"] as const;
 const YAML_START = /^(---|%YAML|#|[A-Za-z_][\w.-]*\s*:)/;
 const MAX_REFERENCE_ERRORS = 20;
 
@@ -22,7 +43,10 @@ const MAX_REFERENCE_ERRORS = 20;
  * resolves. Runs in the browser for fast feedback and on the server.
  */
 export function parseSpecification(text: string): SpecResult<JsonObject> {
-  const content = text.replace(/^﻿/, "").trim();
+  // Only the BOM is removed before parsing. Leading whitespace is valid JSON and
+  // stays, so error positions match the lines and columns the user sees.
+  const source = text.replace(/^\uFEFF/, "");
+  const content = source.trim();
   if (content.length === 0) {
     return fail({ code: "empty", message: "Paste or upload a specification." });
   }
@@ -35,15 +59,15 @@ export function parseSpecification(text: string): SpecResult<JsonObject> {
   if (!content.startsWith("{") && YAML_START.test(content)) {
     return fail({
       code: "yaml",
-      message: "This looks like YAML. ScrAPI accepts OpenAPI specifications in JSON only.",
+      message: "This looks like YAML, which is converted on the server. Submit it again to validate it there.",
     });
   }
 
   let document: JsonValue;
   try {
-    document = JSON.parse(content) as JsonValue;
+    document = JSON.parse(source) as JsonValue;
   } catch (error) {
-    return fail(jsonSyntaxError(error, content));
+    return fail(jsonSyntaxError(error, source));
   }
 
   if (!isJsonObject(document)) {
@@ -65,6 +89,11 @@ export function parseSpecification(text: string): SpecResult<JsonObject> {
 
   const referenceErrors = checkReferences(document);
   if (referenceErrors.length > 0) return { ok: false, errors: referenceErrors };
+
+  if (openApiVersion(document) === "3.1") {
+    const keywordErrors = checkUnsupportedKeywords(document);
+    if (keywordErrors.length > 0) return { ok: false, errors: keywordErrors };
+  }
 
   return { ok: true, value: document };
 }
@@ -107,7 +136,7 @@ function jsonErrorLocation(message: string, content: string): string | undefined
 }
 
 /** Iterative, so a hostile document cannot overflow the stack while being measured. */
-function exceedsDepth(document: JsonObject, maxDepth: number): boolean {
+export function exceedsDepth(document: JsonObject, maxDepth: number): boolean {
   const stack: { value: JsonValue; depth: number }[] = [{ value: document, depth: 1 }];
   for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
     if (item.depth > maxDepth) return true;
@@ -130,25 +159,79 @@ function checkVersion(document: JsonObject): SpecError | undefined {
     return {
       code: "swagger-2",
       message:
-        "Swagger 2.0 specifications are not supported. Convert the specification to OpenAPI 3.0.x first.",
+        "Only Swagger 2.0 can be converted. Convert this specification to OpenAPI 3.0.x first.",
     };
   }
   const version = document.openapi;
-  if (typeof version !== "string") {
+  if (version === undefined && isJsonSchema(document)) {
+    return {
+      code: "json-schema",
+      message: isOpenApiMetaSchema(document)
+        ? "This is a JSON Schema that defines the OpenAPI format itself, not a description of an API. ScrAPI already checks every specification against the official schema for its version. Paste your API's OpenAPI document instead: the JSON file with \"openapi\", \"info\", and \"paths\", usually served by the API (for example at /swagger/v1/swagger.json or /openapi.json)."
+        : `This is a JSON Schema, not an OpenAPI specification. Paste your API's OpenAPI document (${SUPPORTED_DESCRIPTION}): the JSON file with "openapi", "info", and "paths".`,
+    };
+  }
+  if (version === undefined) {
+    // The field is required by the standard, so the version is never guessed.
+    const looksLikeOpenApi = document.paths !== undefined || document.info !== undefined;
     return {
       code: "missing-version",
-      message: "The specification has no \"openapi\" version field. ScrAPI supports OpenAPI 3.0.x.",
+      message: looksLikeOpenApi
+        ? `The specification has no "openapi" field. Add the version it was written for at the top level, for example "openapi": "3.0.3" or "openapi": "3.1.0". ScrAPI supports ${SUPPORTED_DESCRIPTION}.`
+        : `This is not an OpenAPI specification: it has no "openapi" field. ScrAPI supports ${SUPPORTED_DESCRIPTION} documents in JSON.`,
+    };
+  }
+  if (typeof version !== "string") {
+    return {
+      code: "invalid-version",
+      message: `The "openapi" field must be a string such as "3.0.3", not ${describeType(version)}.`,
+      location: "openapi",
     };
   }
   if (!SUPPORTED_VERSION.test(version)) {
     return {
       code: "unsupported-version",
-      message: version.startsWith("3.1")
-        ? `OpenAPI ${version} is not supported yet. ScrAPI supports OpenAPI 3.0.x.`
-        : `OpenAPI version "${version}" is not supported. ScrAPI supports OpenAPI 3.0.x.`,
+      message: /^3\.\d+\./.test(version)
+        ? `OpenAPI ${version} is not supported yet. ScrAPI supports ${SUPPORTED_DESCRIPTION}.`
+        : `OpenAPI version "${version}" is not supported. ScrAPI supports ${SUPPORTED_DESCRIPTION}.`,
     };
   }
   return undefined;
+}
+
+/** A JSON Schema document: it declares `$schema`, or has schema definitions but no API fields. */
+function isJsonSchema(document: JsonObject): boolean {
+  if (typeof document.$schema === "string") return true;
+  const hasDefinitions = isJsonObject(document.definitions) || isJsonObject(document.$defs);
+  return hasDefinitions && document.paths === undefined && document.info === undefined;
+}
+
+/** The schema published at spec.openapis.org that describes OpenAPI documents. */
+function isOpenApiMetaSchema(document: JsonObject): boolean {
+  const id = typeof document.$id === "string" ? document.$id : document.id;
+  return typeof id === "string" && id.includes("spec.openapis.org/oas/");
+}
+
+function describeType(value: JsonValue): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "a list";
+  return typeof value === "object" ? "an object" : `a ${typeof value}`;
+}
+
+/** 3.1 only: schema identifier keywords ScrAPI cannot handle yet, with their locations. */
+function checkUnsupportedKeywords(document: JsonObject): SpecError[] {
+  const errors: SpecError[] = [];
+  forEachObject(document, (node, segments) => {
+    for (const keyword of UNSUPPORTED_31_KEYWORDS) {
+      if (errors.length >= MAX_REFERENCE_ERRORS || typeof node[keyword] !== "string") continue;
+      errors.push({
+        code: "unsupported-keyword",
+        message: `The "${keyword}" keyword is not supported yet. Refer to schemas with "$ref": "#/components/schemas/..." instead.`,
+        location: formatLocation([...segments, keyword]),
+      });
+    }
+  });
+  return errors;
 }
 
 /** Every `$ref` must point inside `#/components/` and resolve. */
@@ -199,7 +282,7 @@ function checkReference(
       location,
     };
   }
-  if (resolvePointer(document, ref.slice(1)) === undefined) {
+  if (resolveReference(document, ref) === undefined) {
     return {
       code: "unresolved-ref",
       message: `The reference "${ref}" does not point to anything in the specification.`,
@@ -209,16 +292,3 @@ function checkReference(
   return undefined;
 }
 
-function resolvePointer(document: JsonObject, pointer: string): JsonValue | undefined {
-  let current: JsonValue | undefined = document;
-  for (const segment of pointerSegments(pointer)) {
-    if (Array.isArray(current)) {
-      current = current[Number(segment)];
-    } else if (isJsonObject(current)) {
-      current = Object.hasOwn(current, segment) ? current[segment] : undefined;
-    } else {
-      return undefined;
-    }
-  }
-  return current;
-}

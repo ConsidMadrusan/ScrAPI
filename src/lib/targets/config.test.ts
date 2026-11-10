@@ -22,7 +22,7 @@ describe("resolveTarget", () => {
   });
 
   it.each([
-    [{ target: "typescript-next", httpClient: "axios" }, "typescript-axios", undefined],
+    [{ target: "typescript-next", httpClient: "axios" }, "typescript-axios", "generator-templates/typescript-axios"],
     [{ target: "typescript-nuxt", httpClient: "fetch" }, "typescript-fetch", "generator-templates/typescript-fetch"],
     [{ target: "typescript-angular" }, "typescript-angular", undefined],
     [{ target: "csharp" }, "csharp", undefined],

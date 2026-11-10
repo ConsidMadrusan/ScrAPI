@@ -1,4 +1,5 @@
 import { isJsonObject, type JsonObject } from "@/lib/openapi/json";
+import { followReferences, resolvePathItem } from "@/lib/openapi/resolve";
 import type { OperationGroup, OperationSummary } from "@/lib/validation/responses";
 import {
   formatOperationKey,
@@ -16,8 +17,10 @@ export function listOperations(document: JsonObject): OperationSummary[] {
   const paths = isJsonObject(document.paths) ? document.paths : {};
   const operations: OperationSummary[] = [];
 
-  for (const [path, pathItem] of Object.entries(paths)) {
-    if (!isJsonObject(pathItem)) continue;
+  for (const [path, declared] of Object.entries(paths)) {
+    // OpenAPI 3.1 path items may be references to components.pathItems.
+    const pathItem = resolvePathItem(document, declared);
+    if (pathItem === undefined) continue;
     for (const method of HTTP_METHODS) {
       const operation = pathItem[method];
       if (!isJsonObject(operation)) continue;
@@ -131,22 +134,11 @@ function requiresInput(document: JsonObject, pathItem: JsonObject, operation: Js
     ...(Array.isArray(operation.parameters) ? operation.parameters : []),
   ];
   const requiredParameter = parameters.some((parameter) => {
-    const resolved = resolveLocal(document, parameter);
+    const resolved = followReferences(document, parameter);
     return isJsonObject(resolved) && (resolved.required === true || resolved.in === "path");
   });
-  const body = resolveLocal(document, operation.requestBody);
+  const body = followReferences(document, operation.requestBody);
   return requiredParameter || (isJsonObject(body) && body.required === true);
-}
-
-/** Follows one `#/components/...` reference; other values are returned as they are. */
-function resolveLocal(document: JsonObject, value: JsonObject[string] | undefined) {
-  if (!isJsonObject(value) || typeof value.$ref !== "string") return value;
-  let current: JsonObject[string] | undefined = document;
-  for (const segment of value.$ref.replace(/^#\//, "").split("/")) {
-    const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
-    current = isJsonObject(current) ? current[key] : undefined;
-  }
-  return current;
 }
 
 function uniqueStrings(value: unknown): string[] {

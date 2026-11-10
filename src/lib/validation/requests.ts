@@ -57,3 +57,50 @@ export const generateRequestSchema = z.object({
     .max(MAX_SELECTED_OPERATIONS, "Too many operations selected."),
 });
 export type GenerateRequest = z.infer<typeof generateRequestSchema>;
+
+/** GraphQL root operation types ScrAPI generates. Subscriptions are not generated. */
+export const GRAPHQL_OPERATION_TYPES = ["query", "mutation"] as const;
+export const graphqlOperationTypeSchema = z.enum(GRAPHQL_OPERATION_TYPES);
+export type GraphqlOperationType = z.infer<typeof graphqlOperationTypeSchema>;
+
+/** Identifies one GraphQL operation by its root type and field name. */
+export const graphqlOperationKeySchema = z.object({
+  operationType: graphqlOperationTypeSchema,
+  field: z.string().regex(/^[_A-Za-z][_0-9A-Za-z]*$/, "Must be a GraphQL field name."),
+});
+export type GraphqlOperationKey = z.infer<typeof graphqlOperationKeySchema>;
+
+/** A GraphQL schema as SDL or introspection JSON, within the specification size limit. */
+export const graphqlSchemaTextSchema = z
+  .string()
+  .refine((text) => text.trim().length > 0, "Paste, upload, or load a GraphQL schema.")
+  .refine(
+    (text) => utf8ByteLength(text) <= MAX_SPEC_BYTES,
+    `The schema is larger than ${formatMegabytes(MAX_SPEC_BYTES)}.`,
+  );
+
+export const graphqlValidateRequestSchema = z.object({ schema: graphqlSchemaTextSchema });
+export type GraphqlValidateRequest = z.infer<typeof graphqlValidateRequestSchema>;
+
+export const graphqlGenerateRequestSchema = z.object({
+  schema: graphqlSchemaTextSchema,
+  options: generationOptionsSchema,
+  selection: z
+    .array(graphqlOperationKeySchema)
+    .min(1, "Select at least one operation.")
+    .max(MAX_SELECTED_OPERATIONS, `Select at most ${String(MAX_SELECTED_OPERATIONS)} operations.`),
+});
+export type GraphqlGenerateRequest = z.infer<typeof graphqlGenerateRequestSchema>;
+
+/**
+ * A server-side load of a URL, used only when the browser cannot read it
+ * (CORS). `kind` picks one of two fixed requests; there is no method or body.
+ */
+export const fetchSourceRequestSchema = z.object({
+  url: z.string().max(2048, "The URL is too long."),
+  kind: z.enum(["document", "introspection"]),
+  headers: z
+    .record(z.string().max(256), z.string().max(8192))
+    .refine((headers) => Object.keys(headers).length <= 20, "Add at most 20 request headers."),
+});
+export type FetchSourceRequest = z.infer<typeof fetchSourceRequestSchema>;

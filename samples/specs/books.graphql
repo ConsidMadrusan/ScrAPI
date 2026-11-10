@@ -1,0 +1,43 @@
+"""Small GraphQL sample: scalars, a custom scalar, an enum, an interface, a union, an input type, a recursive type, queries with and without arguments, mutations, and a subscription (not generated)."""
+scalar DateTime
+
+enum Genre { FICTION NONFICTION POETRY }
+
+interface Node { id: ID! }
+
+type Author implements Node {
+  id: ID!
+  name: String!
+  books(first: Int = 10): [Book!]!
+  bestBook: Book
+}
+
+type Book implements Node {
+  id: ID!
+  title: String!
+  genre: Genre
+  publishedAt: DateTime
+  author: Author!
+  reviews(first: Int!): [Review!]!
+}
+
+type Review { id: ID! rating: Int! text: String }
+
+union SearchResult = Book | Author
+
+input NewBook { title: String!, genre: Genre, authorId: ID! }
+
+type Query {
+  books(genre: Genre, first: Int): [Book!]!
+  book(id: ID!): Book
+  node(id: ID!): Node
+  search(text: String!): [SearchResult!]!
+  health: String!
+}
+
+type Mutation {
+  addBook(input: NewBook!): Book!
+  deleteBook(id: ID!): Boolean!
+}
+
+type Subscription { bookAdded: Book! }

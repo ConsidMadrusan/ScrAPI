@@ -22,5 +22,14 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     restoreMocks: true,
     unstubGlobals: true,
+    server: {
+      deps: {
+        // GraphQL Code Generator loads `graphql` with require(); tests import it as ESM.
+        // Two copies make graphql-js reject schemas "from another module or realm".
+        // Inlining these packages makes them share the test's copy, as the Next.js
+        // bundle does in the app.
+        inline: [/@graphql-codegen\//, /@graphql-tools\//],
+      },
+    },
   },
 });

@@ -1,6 +1,6 @@
 # ScrAPI
 
-Generate typed API clients from OpenAPI specifications, choose exactly which endpoints you need, and get a step-by-step guide for adding the code to your existing project.
+Generate typed API clients from OpenAPI or Swagger specifications and GraphQL schemas, choose exactly which endpoints you need, and get a step-by-step guide for adding the code to your existing project.
 
 > **Status: MVP complete, not yet released.** The full workflow works: provide a specification, select operations, choose one or more framework combinations, generate code, download one ZIP, and follow the integration guide. The Docker image builds and runs. No version has been tagged or published yet.
 
@@ -18,8 +18,8 @@ ScrAPI wraps existing deterministic generators in a focused workflow: pick the e
 
 Each stage has its own page; the workflow moves to the next one when the current stage is complete.
 
-1. **Provide a specification** (`/`): paste OpenAPI JSON or upload a `.json` file. ScrAPI validates it as soon as it is pasted or uploaded (typed input is checked with **Continue**): well-formed JSON, a supported OpenAPI version (3.0.x), valid according to the OpenAPI standard, and self-contained. Errors are reported in plain language; a valid specification opens the next stage.
-2. **Select endpoints** (`/select`): choose which operations to generate, then press **Next**.
+1. **Provide an API description** (`/`): paste it, upload a file (`.json`, `.yaml`, `.yml`, `.graphql`, `.gql`), or **load it from a URL**: the address of an OpenAPI/Swagger document, or a GraphQL endpoint, which is introspected. Your **browser** loads the URL first, so APIs on your own machine (`localhost`) work when they allow requests from other sites (CORS). If the browser cannot read it (usually CORS), **ScrAPI's server loads it instead**, but only from public internet addresses, unless the deployment sets `SCRAPI_ALLOW_PRIVATE_URLS=true` (see "Self-hosting with Docker"). Optional request headers (for example `Authorization`) are sent only with the request to that URL; when the server makes the request, they pass through it and are never stored or logged. YAML and Swagger 2.0 are converted to OpenAPI JSON on the server (your input stays unchanged). ScrAPI validates the input as soon as it is pasted, uploaded, or loaded (typed input is checked with **Continue**): well-formed JSON or YAML, a supported OpenAPI version (3.0.x or 3.1.x, or Swagger 2.0), valid according to the OpenAPI standard (checked against the official OpenAPI JSON Schema for its version, included in the repository: 3.0 revision 2024-10-18, 3.1 revision 2026-08-03), and self-contained. Errors are reported in plain language; a valid specification opens the next stage.
+2. **Select endpoints** (`/select`): choose which operations to generate (for GraphQL: Query and Mutation fields), then press **Next**.
 3. **Choose frameworks** (`/targets`): choose whether the code goes into an **existing project** or a **new project**, and pick one or more framework combinations: TypeScript for Next.js/React or Nuxt/Vue (each with the `axios` and/or `fetch` HTTP client), TypeScript for Angular, and C#/.NET. Press **Generate**. For a new project, the guide starts with the official CLI commands that create it (`create-next-app`, `create-nuxt`, the Angular CLI, or `dotnet new` for a solution with an ASP.NET Core Web API project); every later step then uses that project's paths.
 4. **Generate** (`/generating`): a loading screen shows the progress of each combination while ScrAPI runs an existing generator on the server, one combination at a time.
 5. **Implement** (`/implement`): a landing screen with two choices. **Download ZIP** starts the download of one ZIP with every generated client, and the card then shows that the ZIP was downloaded (with a link to download it again). **Step-by-step guide** opens `/implement/guide`: an onboarding-style flow with one step at a time, a progress bar, and Back/Next, covering every combination in turn; **Finish** returns to the landing screen. If some combinations failed, the others are still available and each failed one can be retried.
@@ -105,19 +105,49 @@ Not guaranteed:
 Included:
 
 - One specification and one or more framework combinations per generation.
-- JSON input only (paste or `.json` upload).
-- OpenAPI 3.0.x, explicitly documented. Other versions are rejected with a clear error until support is verified.
+- Paste, file upload, or a URL loaded in the browser; JSON or YAML; GraphQL SDL or introspection JSON.
+- Swagger 2.0, converted to OpenAPI 3.0 before generation.
+- GraphQL schemas: Query and Mutation fields, for all four targets. See "GraphQL" below.
+- OpenAPI 3.0.x and 3.1.x, explicitly documented. Other versions (including 3.2, which the pinned OpenAPI Generator 7.26.0 cannot read) are rejected with a clear error until support is verified. See "OpenAPI 3.1 notes" below.
 - Self-contained specifications with internal references (`#/components/...`).
 - Endpoint selection with dependency-aware filtering.
 - All four output targets.
 - ZIP download and visual step-by-step integration guide.
 
+### GraphQL
+
+GraphQL has no endpoints: a client is generated from the schema plus the operations (queries and mutations) it sends. ScrAPI builds **one operation per selected root field**:
+
+- every argument becomes a variable;
+- the result selects scalar and enum fields **two levels deep**, for example a book with its author's `id` and `name`, but not the author's books;
+- interfaces and unions select `__typename` and the scalar fields of each possible type;
+- nested fields that need arguments are left out.
+
+The built operations are included as `operations.graphql` / `Operations.graphql`. For more data, edit them and regenerate with your own tooling, or write your own operations.
+
+- **TypeScript (Next.js, Nuxt, Angular):** `graphql.ts` holds typed operations and an SDK with one method per operation (`api.Books(...)`), generated by GraphQL Code Generator. The guide adds a small requester for your HTTP client (fetch, axios, or Angular `HttpClient`), and your project needs the `graphql` package. Custom scalars are typed as `unknown`.
+- **C#/.NET:** the ZIP contains a ready `ApiClient` project for **StrawberryShake** (schema, operations, configuration). Your own `dotnet build` generates the typed client (`IGraphQLClient`, `client.Books.ExecuteAsync(...)`); ScrAPI does not run .NET. Custom scalars become `string`.
+- **Not supported:** subscriptions (listed but not generated) and hand-written GraphQL documents as input. A GraphQL URL needs introspection to be enabled; otherwise paste or upload the schema (SDL or introspection JSON).
+
+### OpenAPI 3.1 notes
+
+OpenAPI Generator marks its 3.1 support as beta, so ScrAPI prepares 3.1 input before generating. Your specification itself is never changed.
+
+- **Webhooks are not generated.** ScrAPI generates clients for operations under `paths`; `webhooks` are left out. A document with only webhooks is rejected with an explanation.
+- **Path items in `components.pathItems`** referenced from `paths` are supported. ScrAPI inlines them for the generator, which would otherwise drop those operations without an error.
+- **`const`** becomes a one-value `enum` for the generator, so the property gets a typed enum instead of `any`.
+- **Operations without `responses`** (allowed in 3.1) get a default response without content for the generator, which otherwise refuses the whole specification. The generated method returns no typed body.
+- **Loosely typed:** `prefixItems` becomes a plain array (`any[]` / `List<Object>`), and `if`/`then`/`else` is ignored. The code compiles, but those parts are not typed.
+- **Not supported yet:** schemas that use `$id`, `$anchor`, `$dynamicRef`, or `$dynamicAnchor` are rejected with their location. Use `$ref` to `#/components/schemas/...` instead.
+
 Explicitly excluded:
 
 - Accounts, database, billing, saved history, collaboration.
 - VS Code extension, Git integration, direct project import or writing into projects.
-- External file or URL references.
-- YAML input, Swagger 2.0, OpenAPI 3.1 (until verified).
+- External file or URL references inside a specification (a specification loaded from a URL must still be self-contained).
+- Swagger 1.x, OpenAPI 3.2 (until the generator supports it and it is verified).
+- GraphQL subscriptions and user-written GraphQL documents.
+- Server-side fetching of private or local addresses on public deployments (allowed only with `SCRAPI_ALLOW_PRIVATE_URLS=true`).
 - Generated React hooks, Vue composables, framework-specific SSR integrations, complete app scaffolds.
 - Generated Zod schemas or runtime response validation in downloaded clients.
 - An interactive tutorial engine (guides are templates).
@@ -147,7 +177,7 @@ Zod and Zustand are approved dependencies. Zustand is installed only if implemen
 There are two different kinds of validation:
 
 - **Application-input validation (Zod)**: is the request well-formed? Is the target one ScrAPI supports? Is the selection a list of method + path pairs? Is the input within size limits? This protects ScrAPI's own boundaries.
-- **OpenAPI specification validation (dedicated validator)**: is the document a valid OpenAPI 3.0.x specification? This uses a purpose-built OpenAPI validator. Zod is not used to reimplement the OpenAPI standard.
+- **OpenAPI specification validation (dedicated validator)**: is the document a valid OpenAPI 3.0.x or 3.1.x specification? This uses a purpose-built OpenAPI validator. Zod is not used to reimplement the OpenAPI standard.
 
 Client-side checks give fast feedback. Server-side validation is authoritative, and submitted operation selections are always revalidated against the specification on the server.
 
@@ -200,6 +230,7 @@ Then open http://localhost:3000.
 | -------------------- | -------------------- | ---------------------------- |
 | `PORT`               | `3000`               | Port the server listens on.  |
 | `HOSTNAME`           | `0.0.0.0`            | Address the server binds to. |
+| `SCRAPI_ALLOW_PRIVATE_URLS` | not set (`false`) | `true` lets the server load URLs on private and local networks (localhost, `10.x`, `192.168.x`, …) when the browser cannot load them because of CORS. Set it only where every user may reach those networks, for example when you run ScrAPI on your own machine or inside a company network. Never on a public deployment. |
 
 New GHCR packages are private by default. To allow anonymous `docker pull`, the repository owner must make the package public in its GitHub package settings.
 
@@ -220,8 +251,11 @@ Images are published by `.github/workflows/release-image.yml`. Pushing a tag lik
 
 ## Input handling and temporary files
 
-- Specifications are accepted as pasted JSON or an uploaded `.json` file, within a documented size limit.
-- Only internal references are allowed. ScrAPI never resolves external references or fetches user-supplied URLs.
+- API descriptions are accepted as pasted text, an uploaded file, or a URL loaded by the browser, within a documented size limit (5 MB). The server only receives the text.
+- Only internal references are allowed. ScrAPI never resolves external references.
+- A URL is loaded by the browser. Only when the browser cannot read it (CORS) does the server load it, through `/api/fetch-source`, with two fixed requests only (GET a document, or POST the standard GraphQL introspection query; callers choose neither method nor body). Every address the host resolves to must be public (private, loopback, link-local including cloud metadata, and other reserved ranges are refused, also after redirects and at connect time against DNS rebinding) unless `SCRAPI_ALLOW_PRIVATE_URLS=true`. At most 5 redirects, 20 seconds, 5 MB, and 4 loads at once. URLs, headers, and responses are never logged or stored.
+- YAML is parsed with the core schema only (no custom tags, unique keys, a small alias budget against "billion laughs" documents).
+- GraphQL generation runs in the server process with a fixed configuration and at most two at once; C# GraphQL clients are generated by your own build, not by the server.
 - Specification content is never interpolated into shell commands. The generator is invoked with fixed arguments through safe process APIs, and the specification is passed as a file.
 - Each generation uses its own temporary directory, which is deleted after success **and** after failure.
 - Execution time and output size are limited. A generator that exceeds the limit is stopped.
@@ -273,9 +307,9 @@ Optional polish that can be deferred if time runs short (without dropping requir
 
 ## Deferred features
 
-- OpenAPI 3.1 and Swagger 2.0 support (after verification).
-- YAML input.
-- External file and URL references.
+- OpenAPI 3.2 support (after the generator supports it and it is verified).
+- External file and URL references inside a specification.
+- GraphQL subscriptions and user-written GraphQL documents.
 - Generating several specifications at once.
 - Generated React hooks, Vue composables, and framework-specific SSR integrations.
 - Generated Zod schemas or runtime response validation.

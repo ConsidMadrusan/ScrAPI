@@ -27,15 +27,22 @@ export const JVM_MAX_HEAP = "-Xmx256m";
 /** Process-wide resource counter (not request state): JVMs currently running. */
 let runningGenerators = 0;
 
+/**
+ * The generator version pinned in openapitools.json, or undefined when that
+ * file is malformed. Parsed safely so a bad configuration is reported as
+ * "generator unavailable" instead of breaking the import of this module.
+ */
 const pinnedVersion = z
   .object({ "generator-cli": z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/) }) })
-  .parse(generatorConfig)["generator-cli"].version;
+  .safeParse(generatorConfig).data?.["generator-cli"].version;
 
 /**
  * The JAR downloaded by `npm run setup:generator` (and copied to the same
- * relative path in the Docker image). Nothing is downloaded at request time.
+ * relative path in the Docker image), or undefined when openapitools.json has
+ * no valid pinned version. Nothing is downloaded at request time.
  */
-export function generatorJarPath(): string {
+export function generatorJarPath(): string | undefined {
+  if (pinnedVersion === undefined) return undefined;
   return join(
     process.cwd(),
     "node_modules/@openapitools/openapi-generator-cli/versions",
@@ -59,7 +66,7 @@ export type GeneratorOutcome =
   | { status: "output-too-large" }
   | { status: "aborted" }
   | { status: "busy" }
-  | { status: "unavailable"; reason: "missing-jar" | "missing-java" };
+  | { status: "unavailable"; reason: "invalid-config" | "missing-jar" | "missing-java" | "spawn-failed"; code?: string };
 
 /** Fixed argument list: settings come from target configuration, never from user input. */
 export function generatorArguments(run: GeneratorRun, jarPath: string): string[] {
@@ -109,6 +116,7 @@ export async function runGenerator(run: GeneratorRun): Promise<GeneratorOutcome>
 
 async function startGenerator(run: GeneratorRun): Promise<GeneratorOutcome> {
   const jarPath = generatorJarPath();
+  if (jarPath === undefined) return { status: "unavailable", reason: "invalid-config" };
   try {
     await access(jarPath);
   } catch {
@@ -168,10 +176,12 @@ async function startGenerator(run: GeneratorRun): Promise<GeneratorOutcome> {
 
     child.once("error", (error: NodeJS.ErrnoException) => {
       cleanUp();
+      // Java could not be started at all (missing, not executable, out of
+      // processes or memory): a server problem, not a problem with the specification.
       resolve(
         error.code === "ENOENT"
           ? { status: "unavailable", reason: "missing-java" }
-          : { status: "failed", exitCode: null },
+          : { status: "unavailable", reason: "spawn-failed", code: error.code ?? "unknown" },
       );
     });
     child.once("close", (exitCode) => {

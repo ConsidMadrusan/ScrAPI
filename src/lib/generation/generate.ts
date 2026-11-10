@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveTarget } from "@/lib/targets/config";
 import type { Problem } from "@/lib/validation/problems";
-import type { GenerateSuccess } from "@/lib/validation/responses";
+import type { OpenApiGenerateSuccess } from "@/lib/validation/responses";
 import { collectOutput, OutputLimitError } from "./collect-output";
-import { keepFirstTagOnly } from "./generator-input";
+import { prepareGeneratorInput } from "./generator-input";
 import { runGenerator, type GeneratorOutcome } from "./java-generator";
 import type { PreparedGeneration } from "./prepare";
 
 export type GenerateResult =
-  | { ok: true; value: GenerateSuccess }
+  | { ok: true; value: OpenApiGenerateSuccess }
   | { ok: false; status: number; errors: Problem[] };
 
 /**
@@ -25,12 +25,21 @@ export async function generateClient(
 ): Promise<GenerateResult> {
   const target = resolveTarget(prepared.options);
   const startedAt = Date.now();
-  const workDir = await mkdtemp(join(tmpdir(), "scrapi-"));
+  let workDir: string;
+  try {
+    workDir = await mkdtemp(join(tmpdir(), "scrapi-"));
+  } catch (error) {
+    return tempStorageFailure(error);
+  }
 
   try {
     const specPath = join(workDir, "spec.json");
     const outputDir = join(workDir, "output");
-    await writeFile(specPath, JSON.stringify(keepFirstTagOnly(prepared.filteredSpec)), "utf8");
+    try {
+      await writeFile(specPath, JSON.stringify(prepareGeneratorInput(prepared.filteredSpec)), "utf8");
+    } catch (error) {
+      return tempStorageFailure(error);
+    }
 
     const outcome = await runGenerator({ settings: target.generator, specPath, outputDir, signal });
     if (outcome.status !== "ok") {
@@ -53,6 +62,7 @@ export async function generateClient(
       ok: true,
       value: {
         ok: true,
+        kind: "openapi",
         options: prepared.options,
         archiveRoot: target.archiveRoot,
         destinationRoot: target.destinationRoot,
@@ -64,8 +74,26 @@ export async function generateClient(
     if (error instanceof OutputLimitError) return outputTooLarge();
     throw error;
   } finally {
-    await rm(workDir, { recursive: true, force: true });
+    // A failed cleanup must not replace the result; the OS temp folder is cleared eventually.
+    await rm(workDir, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn("Temp folder cleanup failed", { code: errorCode(error) });
+    });
   }
+}
+
+/** The OS temp folder is missing, read-only, or full: a server problem, not the user's. */
+function tempStorageFailure(error: unknown): Extract<GenerateResult, { ok: false }> {
+  // The error code only: messages contain temp paths.
+  console.error("Temp storage unavailable", { code: errorCode(error) });
+  return failure(
+    503,
+    "temp-storage-unavailable",
+    "The server could not create temporary files for generation. Try again later.",
+  );
+}
+
+function errorCode(error: unknown): string {
+  return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "unknown";
 }
 
 function generatorFailure(
@@ -92,7 +120,7 @@ function generatorFailure(
       // The client has disconnected, so nobody reads this response.
       return failure(503, "generation-aborted", "Generation was cancelled.");
     case "unavailable":
-      console.error("Code generator is not available", { reason: outcome.reason });
+      console.error("Code generator is not available", { reason: outcome.reason, code: outcome.code });
       return failure(503, "generator-unavailable", "Code generation is not available on this server right now.");
   }
 }

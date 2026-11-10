@@ -1,0 +1,11 @@
+{{!
+  ScrAPI override of the typescript-axios modelIndex template from OpenAPI Generator 7.26.0
+  (the version pinned in openapitools.json). Re-check this file whenever that version changes.
+
+  Change from upstream: when the selection uses no models, upstream writes an empty
+  model/index.ts. TypeScript treats an empty file as a script, not a module, so the
+  package index's `export * from "./model"` fails to compile (TS2306). The override
+  writes `export {};` in that case. With models, the output is the same as upstream.
+}}{{#models}}{{#model}}export * from './{{classFilename}}{{importFileExtension}}';{{/model}}
+{{/models}}{{^models}}export {};
+{{/models}}

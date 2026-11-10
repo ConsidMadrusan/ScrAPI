@@ -3,17 +3,23 @@
 import { useId, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { HttpMethod } from "@/lib/validation/operation";
-import type { OperationGroup, OperationSummary } from "@/lib/validation/responses";
+import type { GraphqlOperationType } from "@/lib/validation/requests";
+import type { GraphqlOperation, OperationGroup, OperationSummary } from "@/lib/validation/responses";
+
+/** An OpenAPI operation (method + path) or a GraphQL root field (query or mutation). */
+type SelectableOperation = OperationSummary | GraphqlOperation;
 
 interface OperationSelectorProps {
-  operations: readonly OperationSummary[];
+  operations: readonly SelectableOperation[];
   groups: readonly OperationGroup[];
   /** Selected operation ids (`GET /users`). One id selects the operation in every group. */
   selected: ReadonlySet<string>;
   onSelectedChange: (selected: Set<string>) => void;
 }
 
-const METHOD_CLASSES: Record<HttpMethod, string> = {
+const BADGE_CLASSES: Record<HttpMethod | GraphqlOperationType, string> = {
+  query: "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200",
+  mutation: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
   get: "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200",
   post: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
   put: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
@@ -66,7 +72,7 @@ export function OperationSelector({
             onChange={(event) => {
               setQuery(event.target.value);
             }}
-            placeholder="Path, summary, or operationId"
+            placeholder="Path, field, summary, or operationId"
             className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-8 rounded-lg border px-2.5 text-sm outline-none focus-visible:ring-3"
           />
         </div>
@@ -126,8 +132,9 @@ export function OperationSelector({
             </div>
             <ul className="divide-y">
               {visibleIds.map((id, operationIndex) => {
-                const operation = byId.get(id);
-                if (!operation) return null;
+                const found = byId.get(id);
+                if (!found) return null;
+                const operation = display(found);
                 const checkboxId = `${groupCheckboxId}-op-${String(operationIndex)}`;
                 return (
                   <li key={id} className="flex items-start gap-3 px-3 py-2">
@@ -144,11 +151,11 @@ export function OperationSelector({
                     <label htmlFor={checkboxId} className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="flex flex-wrap items-center gap-2">
                         <span
-                          className={`rounded px-1.5 py-0.5 font-mono text-xs font-semibold uppercase ${METHOD_CLASSES[operation.method]}`}
+                          className={`rounded px-1.5 py-0.5 font-mono text-xs font-semibold uppercase ${BADGE_CLASSES[operation.badge]}`}
                         >
-                          {operation.method}
+                          {operation.badge}
                         </span>
-                        <span className="font-mono text-sm break-all">{operation.path}</span>
+                        <span className="font-mono text-sm break-all">{operation.title}</span>
                         {operation.deprecated ? (
                           <span className="text-muted-foreground text-xs">(deprecated)</span>
                         ) : null}
@@ -156,9 +163,9 @@ export function OperationSelector({
                       {operation.summary ? (
                         <span className="text-sm">{operation.summary}</span>
                       ) : null}
-                      {operation.operationId ? (
+                      {operation.detail ? (
                         <span className="text-muted-foreground font-mono text-xs">
-                          {operation.operationId}
+                          {operation.detail}
                         </span>
                       ) : null}
                     </label>
@@ -173,17 +180,44 @@ export function OperationSelector({
   );
 }
 
-function matchingIds(operations: readonly OperationSummary[], query: string): Set<string> {
+interface OperationDisplay {
+  badge: HttpMethod | GraphqlOperationType;
+  /** The path (OpenAPI) or field name (GraphQL). */
+  title: string;
+  summary: string | undefined;
+  /** The operationId (OpenAPI). */
+  detail: string | undefined;
+  deprecated: boolean | undefined;
+}
+
+function display(operation: SelectableOperation): OperationDisplay {
+  if ("operationType" in operation) {
+    return {
+      badge: operation.operationType,
+      title: operation.field,
+      summary: operation.description?.split("\n")[0],
+      detail: undefined,
+      deprecated: operation.deprecated,
+    };
+  }
+  return {
+    badge: operation.method,
+    title: operation.path,
+    summary: operation.summary,
+    detail: operation.operationId,
+    deprecated: operation.deprecated,
+  };
+}
+
+function matchingIds(operations: readonly SelectableOperation[], query: string): Set<string> {
   const needle = query.trim().toLowerCase();
   return new Set(
     operations
-      .filter(
-        (operation) =>
-          needle.length === 0 ||
-          [operation.path, operation.summary, operation.operationId].some((text) =>
-            text?.toLowerCase().includes(needle),
-          ),
-      )
+      .filter((operation) => {
+        if (needle.length === 0) return true;
+        const { title, summary, detail } = display(operation);
+        return [title, summary, detail].some((text) => text?.toLowerCase().includes(needle));
+      })
       .map((operation) => operation.id),
   );
 }

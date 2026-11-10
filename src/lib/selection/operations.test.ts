@@ -148,3 +148,42 @@ describe("resolveSelection", () => {
     expect(result).toEqual({ ok: false, reason: "unknown", unknownIds: ["PATCH /books"] });
   });
 });
+
+describe("listOperations with OpenAPI 3.1", () => {
+  const todo31 = JSON.parse(
+    readFileSync(join(process.cwd(), "samples/specs/todo-3.1.json"), "utf8"),
+  ) as JsonObject;
+
+  it("lists operations of path items referenced from components.pathItems, but not webhooks", () => {
+    expect(listOperations(todo31).map((operation) => operation.id)).toEqual([
+      "GET /todos",
+      "POST /todos",
+      "GET /todos/{todoId}",
+      "PUT /todos/{todoId}",
+      "DELETE /todos/{todoId}",
+    ]);
+  });
+
+  it("treats path parameters of a referenced path item as required input", () => {
+    const getTodo = listOperations(todo31).find((operation) => operation.id === "GET /todos/{todoId}");
+    expect(getTodo?.requiresInput).toBe(true);
+  });
+
+  it("follows chains of parameter references", () => {
+    const spec: JsonObject = {
+      openapi: "3.1.0",
+      paths: {
+        "/items": {
+          get: { parameters: [{ $ref: "#/components/parameters/Alias" }], responses: {} },
+        },
+      },
+      components: {
+        parameters: {
+          Alias: { $ref: "#/components/parameters/Limit" },
+          Limit: { name: "limit", in: "query", required: true, schema: { type: "integer" } },
+        },
+      },
+    };
+    expect(listOperations(spec)[0]?.requiresInput).toBe(true);
+  });
+});

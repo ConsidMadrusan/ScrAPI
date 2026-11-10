@@ -19,7 +19,7 @@ const interactiveCardClass = `${cardClass} hover:bg-muted disabled:cursor-wait d
 
 /** Stage 5: choose between downloading every generated client as one ZIP and the step-by-step guide. */
 export function ImplementScreen() {
-  const { runs, project, retry, download, downloadZip } = useWorkflow();
+  const { runs, project, retry, download, downloadErrors, downloadZip } = useWorkflow();
   const results = useMemo(() => successfulResults(runs), [runs]);
   const stepCount = useMemo(
     () =>
@@ -93,9 +93,7 @@ export function ImplementScreen() {
         {STATUS_MESSAGES[download]}
       </p>
       {download === "failed" ? (
-        <p role="alert" className="text-destructive text-sm">
-          The ZIP file could not be created. Try again.
-        </p>
+        <ProblemList title="The ZIP file could not be created" problems={downloadErrors} />
       ) : null}
 
       <div>

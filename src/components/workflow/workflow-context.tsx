@@ -2,17 +2,25 @@
 
 import { createContext, use, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { ARCHIVE_FILE_NAME } from "@/lib/archive/names";
+import { needsServerConversion } from "@/lib/openapi/convertible";
 import { parseSpecification } from "@/lib/openapi/parse";
+import { detectSourceKind, type SourceKind } from "@/lib/source-kind";
 import { combinationKey, sortCombinations } from "@/lib/targets/catalog";
 import type { GenerationOptions, ProjectMode } from "@/lib/validation/requests";
-import type { GenerateSuccess, Problem, ValidateSuccess } from "@/lib/validation/responses";
-import { requestArchive, requestGeneration, requestValidation } from "./api";
+import type { GenerateResponse, GenerateSuccess, GraphqlValidateSuccess, Problem, ValidateSuccess } from "@/lib/validation/responses";
+import {
+  requestArchive,
+  requestGeneration,
+  requestGraphqlGeneration,
+  requestGraphqlValidation,
+  requestValidation,
+} from "./api";
 
 export type ValidationState =
   | { status: "idle" }
   | { status: "validating" }
   | { status: "invalid"; errors: Problem[] }
-  | { status: "valid"; result: ValidateSuccess };
+  | { status: "valid"; result: ValidateSuccess | GraphqlValidateSuccess };
 
 /** The generation of one framework combination. */
 export type Run =
@@ -20,10 +28,18 @@ export type Run =
   | { options: GenerationOptions; status: "done"; result: GenerateSuccess }
   | { options: GenerationOptions; status: "failed"; errors: Problem[] };
 
+/** How the user provides the API description on the first stage. */
+export type InputMethod = "paste" | "upload" | "url";
+
 /** The ZIP of the latest successful results. */
 export type DownloadState = "idle" | "downloading" | "downloaded" | "failed";
 
 export interface WorkflowState {
+  /** The input method chosen on the first stage, or null while the user is choosing. */
+  inputMethod: InputMethod | null;
+  setInputMethod: (method: InputMethod) => void;
+  /** Back to the method choice: clears the text and everything derived from it. */
+  resetInput: () => void;
   specText: string;
   validation: ValidationState;
   /** Selected operation ids (`GET /users`). */
@@ -35,12 +51,17 @@ export interface WorkflowState {
   runs: readonly Run[] | null;
   /** Reset whenever the results change, since the ZIP changes with them. */
   download: DownloadState;
+  /** Why the last ZIP download failed, as reported by the server; empty otherwise. */
+  downloadErrors: readonly Problem[];
   /** Builds the ZIP of the successful results on the server and saves it. */
   downloadZip: () => Promise<void>;
   /** Replaces the specification and clears everything derived from it. */
   setSpecText: (text: string) => void;
-  /** Validates `text` (the current specification) and reports whether it is valid. */
-  validate: (text: string) => Promise<boolean>;
+  /**
+   * Validates `text` (the current specification or GraphQL schema) and reports
+   * whether it is valid. The kind is detected from the text unless given.
+   */
+  validate: (text: string, kind?: SourceKind) => Promise<boolean>;
   setSelected: (selected: ReadonlySet<string>) => void;
   setCombinations: (combinations: readonly GenerationOptions[]) => void;
   /** Changes the guide, so the ZIP must be downloaded again. */
@@ -78,13 +99,20 @@ export function successfulResults(runs: readonly Run[] | null): GenerateSuccess[
  * persisted: reloading the page starts again.
  */
 export function WorkflowProvider({ children }: { children: ReactNode }) {
+  const [inputMethod, setInputMethodState] = useState<InputMethod | null>(null);
   const [specText, setSpecTextState] = useState("");
   const [validation, setValidation] = useState<ValidationState>({ status: "idle" });
   const [selected, setSelectedState] = useState<ReadonlySet<string>>(new Set());
   const [combinations, setCombinationsState] = useState<readonly GenerationOptions[]>([]);
   const [project, setProjectState] = useState<ProjectMode>("existing");
   const [runs, setRuns] = useState<readonly Run[] | null>(null);
-  const [download, setDownload] = useState<DownloadState>("idle");
+  const [download, setDownloadState] = useState<DownloadState>("idle");
+  const [downloadErrors, setDownloadErrors] = useState<readonly Problem[]>([]);
+  /** Sets the download state; only a failure carries problems. */
+  const setDownload = useCallback((next: DownloadState, errors: readonly Problem[] = []) => {
+    setDownloadState(next);
+    setDownloadErrors(errors);
+  }, []);
   const pendingValidation = useRef<AbortController | null>(null);
   const pendingGeneration = useRef<AbortController | null>(null);
 
@@ -94,7 +122,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
     pendingGeneration.current = null;
     setRuns(null);
     setDownload("idle");
-  }, []);
+  }, [setDownload]);
 
   const setSpecText = useCallback(
     (text: string) => {
@@ -109,14 +137,27 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
     [clearRuns],
   );
 
+  const setInputMethod = useCallback((method: InputMethod) => {
+    setInputMethodState(method);
+  }, []);
+
+  const resetInput = useCallback(() => {
+    setInputMethodState(null);
+    setSpecText("");
+  }, [setSpecText]);
+
   const validate = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string, kind: SourceKind = detectSourceKind(text)): Promise<boolean> => {
       clearRuns();
       // Quick local checks first; the server's validation is authoritative.
-      const local = parseSpecification(text);
-      if (!local.ok) {
-        setValidation({ status: "invalid", errors: local.errors });
-        return false;
+      // YAML and Swagger 2.0 are converted on the server, and GraphQL schemas
+      // are only checked there, so they go there directly.
+      if (kind === "openapi" && !needsServerConversion(text)) {
+        const local = parseSpecification(text);
+        if (!local.ok) {
+          setValidation({ status: "invalid", errors: local.errors });
+          return false;
+        }
       }
 
       pendingValidation.current?.abort();
@@ -126,7 +167,10 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       setSelectedState(new Set());
 
       try {
-        const response = await requestValidation(text, controller.signal);
+        const response =
+          kind === "graphql"
+            ? await requestGraphqlValidation(text, controller.signal)
+            : await requestValidation(text, controller.signal);
         if (controller.signal.aborted) return false;
         setValidation(
           response.ok ? { status: "valid", result: response } : { status: "invalid", errors: response.errors },
@@ -171,9 +215,30 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
   const runSequence = useCallback(
     (targets: readonly GenerationOptions[]) => {
       if (validation.status !== "valid") return;
-      const selection = validation.result.operations
-        .filter((operation) => selected.has(operation.id))
-        .map(({ method, path }) => ({ method, path }));
+      const source = validation.result;
+      /** Generates one combination from the server's normalized input: OpenAPI JSON or GraphQL SDL. */
+      const generateOne = (options: GenerationOptions, signal: AbortSignal): Promise<GenerateResponse> =>
+        source.kind === "graphql"
+          ? requestGraphqlGeneration(
+              {
+                schema: source.schema,
+                options,
+                selection: source.operations
+                  .filter((operation) => selected.has(operation.id))
+                  .map(({ operationType, field }) => ({ operationType, field })),
+              },
+              signal,
+            )
+          : requestGeneration(
+              {
+                spec: source.spec,
+                options,
+                selection: source.operations
+                  .filter((operation) => selected.has(operation.id))
+                  .map(({ method, path }) => ({ method, path })),
+              },
+              signal,
+            );
       const controller = new AbortController();
       pendingGeneration.current = controller;
 
@@ -190,10 +255,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
           update({ options, status: "running" });
           let run: Run;
           try {
-            const response = await requestGeneration(
-              { spec: specText, options, selection },
-              controller.signal,
-            );
+            const response = await generateOne(options, controller.signal);
             run = response.ok
               ? { options, status: "done", result: response }
               : { options, status: "failed", errors: response.errors };
@@ -207,7 +269,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       };
       void work();
     },
-    [validation, selected, specText],
+    [validation, selected],
   );
 
   const generate = useCallback(() => {
@@ -229,7 +291,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       setDownload("idle");
       runSequence([run.options]);
     },
-    [runs, runSequence],
+    [runs, runSequence, setDownload],
   );
 
   const downloadZip = useCallback(async () => {
@@ -237,12 +299,12 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
     if (results.length === 0) return;
     setDownload("downloading");
     try {
-      const zip = await requestArchive(results, project);
-      if (zip === undefined) {
-        setDownload("failed");
+      const response = await requestArchive(results, project);
+      if (!response.ok) {
+        setDownload("failed", response.errors);
         return;
       }
-      const url = URL.createObjectURL(zip);
+      const url = URL.createObjectURL(response.zip);
       const link = document.createElement("a");
       link.href = url;
       link.download = ARCHIVE_FILE_NAME;
@@ -250,12 +312,15 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       URL.revokeObjectURL(url);
       setDownload("downloaded");
     } catch {
-      setDownload("failed");
+      setDownload("failed", NETWORK_ERROR);
     }
-  }, [runs, project]);
+  }, [runs, project, setDownload]);
 
   const value = useMemo<WorkflowState>(
     () => ({
+      inputMethod,
+      setInputMethod,
+      resetInput,
       specText,
       validation,
       selected,
@@ -263,6 +328,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       project,
       runs,
       download,
+      downloadErrors,
       downloadZip,
       setSpecText,
       validate,
@@ -274,6 +340,9 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       cancelGeneration: clearRuns,
     }),
     [
+      inputMethod,
+      setInputMethod,
+      resetInput,
       specText,
       validation,
       selected,
@@ -281,6 +350,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       project,
       runs,
       download,
+      downloadErrors,
       downloadZip,
       setSpecText,
       validate,

@@ -1,4 +1,4 @@
-import type { GeneratedFile, GenerateSuccess, OperationSummary } from "@/lib/validation/responses";
+import type { GeneratedFile, OpenApiGenerateSuccess, OperationSummary } from "@/lib/validation/responses";
 
 /** A generated method for one selected operation, found in the generated code. */
 export interface UsageExample {
@@ -48,7 +48,7 @@ const PATTERNS: Record<"axios" | "fetch" | "angular" | "csharp", Pattern> = {
  * need no arguments come first, GET before other methods. Only methods that
  * are actually declared in the generated files are returned; nothing is guessed.
  */
-export function findUsageExample(result: GenerateSuccess): UsageExample | undefined {
+export function findUsageExample(result: OpenApiGenerateSuccess): UsageExample | undefined {
   const pattern = PATTERNS[flavor(result)];
   const candidates = [...result.operations].sort(
     (a, b) =>
@@ -76,7 +76,7 @@ export function findUsageExample(result: GenerateSuccess): UsageExample | undefi
   return undefined;
 }
 
-function flavor(result: GenerateSuccess): keyof typeof PATTERNS {
+function flavor(result: OpenApiGenerateSuccess): keyof typeof PATTERNS {
   switch (result.options.target) {
     case "typescript-next":
     case "typescript-nuxt":

@@ -55,4 +55,18 @@ describe("readJsonBody", () => {
     const request = new Request("http://localhost/api", { method: "POST", body: "nope" });
     expect(await readJsonBody(request, 100)).toMatchObject({ ok: false, status: 400 });
   });
+
+  it("reports a body that breaks off while it is read", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"spec":'));
+        controller.error(new Error("socket hang up"));
+      },
+    });
+    const request = new Request("http://localhost/api", { method: "POST", body: stream, duplex: "half" } as RequestInit);
+
+    const result = await readJsonBody(request, 100);
+
+    expect(result).toMatchObject({ ok: false, status: 400, problem: { code: "request-interrupted" } });
+  });
 });

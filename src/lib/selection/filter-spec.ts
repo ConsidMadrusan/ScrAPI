@@ -1,4 +1,5 @@
 import { isJsonObject, type JsonObject, type JsonValue } from "@/lib/openapi/json";
+import { resolvePathItem } from "@/lib/openapi/resolve";
 import {
   formatOperationKey,
   HTTP_METHODS,
@@ -19,6 +20,9 @@ type KeptComponents = Map<string, Set<string>>;
 /**
  * Returns a new specification that contains only the selected operations and
  * every component they need, transitively. The input is never modified.
+ * OpenAPI 3.1 path items referenced from `components.pathItems` are inlined
+ * (the generator silently drops operations behind such references), and
+ * `webhooks` are left out: they are not operations the user selected.
  */
 export function filterSpec(
   spec: JsonObject,
@@ -29,7 +33,7 @@ export function filterSpec(
     throw new SpecFilterError("The specification has no paths object.");
   }
 
-  const keptPaths = selectOperations(paths, selection);
+  const keptPaths = selectOperations(spec, paths, selection);
   const keptOperations = listOperationObjects(keptPaths);
   const components = isJsonObject(spec.components) ? spec.components : {};
 
@@ -39,6 +43,7 @@ export function filterSpec(
   const kept = collectComponents(components, keptPaths, securityRefs);
 
   const result: JsonObject = { ...spec, paths: keptPaths };
+  delete result.webhooks;
   const keptComponentsObject = pickComponents(components, kept);
   if (keptComponentsObject === undefined) {
     delete result.components;
@@ -58,6 +63,7 @@ export function filterSpec(
 
 /** Builds a paths object with only the selected methods, in spec order. */
 function selectOperations(
+  spec: JsonObject,
   paths: JsonObject,
   selection: readonly OperationKey[],
 ): JsonObject {
@@ -65,8 +71,12 @@ function selectOperations(
   const found = new Set<string>();
   const keptPaths: JsonObject = {};
 
-  for (const [path, pathItem] of Object.entries(paths)) {
-    if (!isJsonObject(pathItem)) continue;
+  for (const [path, declared] of Object.entries(paths)) {
+    if (!isJsonObject(declared)) continue;
+    const pathItem = resolvePathItem(spec, declared);
+    if (pathItem === undefined) {
+      throw new SpecFilterError(`The path item reference on ${path} does not resolve.`);
+    }
 
     const keptItem: JsonObject = {};
     let hasOperation = false;
@@ -84,14 +94,7 @@ function selectOperations(
       }
     }
 
-    if (hasOperation) {
-      if (typeof keptItem.$ref === "string") {
-        throw new SpecFilterError(
-          `Path item references ("$ref" on ${path}) are not supported.`,
-        );
-      }
-      keptPaths[path] = keptItem;
-    }
+    if (hasOperation) keptPaths[path] = keptItem;
   }
 
   const unknown = [...wanted].filter((key) => !found.has(key));
@@ -168,7 +171,8 @@ function collectComponents(
     }
     const name = unescapePointer(encodedName);
     const sectionObject = components[section];
-    const target = isJsonObject(sectionObject) ? sectionObject[name] : undefined;
+    const target =
+      isJsonObject(sectionObject) && Object.hasOwn(sectionObject, name) ? sectionObject[name] : undefined;
     if (target === undefined) {
       throw new SpecFilterError(`Reference "${ref}" does not resolve.`);
     }

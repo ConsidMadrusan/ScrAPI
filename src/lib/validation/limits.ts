@@ -44,3 +44,13 @@ export function utf8ByteLength(text: string): number {
 export function formatMegabytes(bytes: number): string {
   return `${String(Math.round((bytes / (1024 * 1024)) * 10) / 10)} MB`;
 }
+
+/**
+ * Most GraphQL generations that may run at once. They run in this process
+ * (GraphQL Code Generator) rather than in a JVM, so they are cheaper than
+ * OpenAPI generations; further requests are rejected as busy.
+ */
+export const MAX_CONCURRENT_GRAPHQL_GENERATIONS = 2;
+
+/** Most server-side URL loads (the CORS fallback) running at once; further requests are rejected as busy. */
+export const MAX_CONCURRENT_URL_FETCHES = 4;

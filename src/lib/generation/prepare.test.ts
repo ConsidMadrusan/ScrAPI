@@ -57,10 +57,10 @@ describe("prepareGeneration", () => {
 
   it("returns specification errors instead of generating", async () => {
     const result = await prepareGeneration({
-      spec: '{"swagger": "2.0"}',
+      spec: '{"openapi": "3.2.0"}',
       options: { target: "csharp" },
       selection: [{ method: "get", path: "/todos" }],
     });
-    expect(result).toEqual({ ok: false, errors: [expect.objectContaining({ code: "swagger-2" })] });
+    expect(result).toEqual({ ok: false, errors: [expect.objectContaining({ code: "unsupported-version" })] });
   });
 });

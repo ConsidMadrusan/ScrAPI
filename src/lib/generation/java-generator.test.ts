@@ -109,7 +109,7 @@ describe("runGenerator", () => {
     expect(await outcome).toEqual({ status: "ok" });
     expect(spawnMock).toHaveBeenCalledWith(
       "java",
-      generatorArguments(run, generatorJarPath()),
+      generatorArguments(run, generatorJarPath() ?? ""),
       expect.objectContaining({ shell: false, stdio: "ignore" }),
     );
   });
@@ -182,6 +182,17 @@ describe("runGenerator", () => {
     child.emit("error", Object.assign(new Error("spawn java ENOENT"), { code: "ENOENT" }));
 
     expect(await outcome).toEqual({ status: "unavailable", reason: "missing-java" });
+  });
+
+  it("reports other start failures as unavailable, not as a specification problem", async () => {
+    const child = fakeProcess();
+    const outcome = runGenerator(run);
+    await vi.waitFor(() => {
+      expect(spawnMock).toHaveBeenCalled();
+    });
+    child.emit("error", Object.assign(new Error("spawn java EACCES"), { code: "EACCES" }));
+
+    expect(await outcome).toEqual({ status: "unavailable", reason: "spawn-failed", code: "EACCES" });
   });
 
   it("does not start anything when the JAR is missing", async () => {

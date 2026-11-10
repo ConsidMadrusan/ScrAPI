@@ -6,11 +6,19 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { useSyncExternalStore } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildSchema } from "graphql";
+import { groupGraphqlOperations, listGraphqlOperations } from "@/lib/graphql/operations";
 import type { JsonObject } from "@/lib/openapi/json";
 import { groupByTag, listOperations } from "@/lib/selection/operations";
 import { combinationKey } from "@/lib/targets/catalog";
-import type { GenerateRequest } from "@/lib/validation/requests";
-import type { ArchiveRequest, FailureResponse, ValidateSuccess } from "@/lib/validation/responses";
+import type { GenerateRequest, GraphqlGenerateRequest } from "@/lib/validation/requests";
+import type {
+  ArchiveRequest,
+  FailureResponse,
+  GraphqlGenerateSuccess,
+  GraphqlValidateSuccess,
+  ValidateSuccess,
+} from "@/lib/validation/responses";
 import { generationResult } from "@/test/generation-fixtures";
 import { GeneratingScreen } from "./generating-screen";
 import { GuideScreen } from "./guide-screen";
@@ -82,6 +90,8 @@ const operations = listOperations(todo);
 
 const valid: ValidateSuccess = {
   ok: true,
+  spec: todoText,
+  conversions: [],
   info: { title: "Todo API", version: "1.0.0", openapi: "3.0.3" },
   operations,
   groups: groupByTag(todo, operations),
@@ -92,6 +102,11 @@ const generatorFailure: FailureResponse = {
   errors: [{ code: "generator-failed", message: "The generator could not process the specification." }],
 };
 
+const archiveBusy: FailureResponse = {
+  ok: false,
+  errors: [{ code: "archive-busy", message: "The server is busy creating other ZIP files. Try again in a moment." }],
+};
+
 interface Replies {
   validate?: ValidateSuccess | FailureResponse;
   /** Combination keys whose generation fails. */
@@ -100,6 +115,9 @@ interface Replies {
   archive?: { ok: boolean };
 }
 
+/** Origin of the API whose specification the URL tests load (in the browser). */
+const REMOTE_ORIGIN = "https://api.example.com";
+
 /** The JSON body of a recorded request; every API call in the workflow sends a string. */
 function jsonBody(init: RequestInit | undefined): unknown {
   return typeof init?.body === "string" ? JSON.parse(init.body) : null;
@@ -107,8 +125,12 @@ function jsonBody(init: RequestInit | undefined): unknown {
 
 /** Answers the API routes like the server would, and records every request. */
 function mockFetch({ validate = valid, failing = new Set(), archive = { ok: true } }: Replies = {}) {
-  const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>((url, init) => {
+  const fetchMock = vi.fn<(url: string | URL, init?: RequestInit) => Promise<Response>>((target, init) => {
     const body = jsonBody(init);
+    const url = String(target);
+    if (url.startsWith(REMOTE_ORIGIN)) {
+      return Promise.resolve(new Response(todoText, { headers: { "content-type": "application/json" } }));
+    }
     switch (url) {
       case "/api/validate":
         return Promise.resolve(Response.json(validate, { status: validate.ok ? 200 : 422 }));
@@ -124,7 +146,7 @@ function mockFetch({ validate = valid, failing = new Set(), archive = { ok: true
         return Promise.resolve(
           archive.ok
             ? new Response(new Uint8Array([0x50, 0x4b]), { headers: { "content-type": "application/zip" } })
-            : Response.json(generatorFailure, { status: 500 }),
+            : Response.json(archiveBusy, { status: 503 }),
         );
       default:
         return Promise.reject(new Error(`unexpected request to ${url}`));
@@ -141,11 +163,18 @@ function requestsTo(fetchMock: ReturnType<typeof mockFetch>, url: string): unkno
 }
 
 function specBox() {
-  return screen.getByRole("textbox", { name: "OpenAPI specification (JSON)" });
+  return screen.getByRole("textbox", { name: "API description: OpenAPI, Swagger, or GraphQL" });
+}
+
+/** Opens the form for an input method from the chooser on the first stage, if it is not open yet. */
+async function chooseMethod(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
+  const card = screen.queryByRole("button", { name });
+  if (card) await user.click(card);
 }
 
 async function pasteSpec(user: ReturnType<typeof userEvent.setup>, text = todoText) {
-  await user.click(specBox());
+  await chooseMethod(user, /^Paste/);
+  await user.click(await screen.findByRole("textbox", { name: "API description: OpenAPI, Swagger, or GraphQL" }));
   await user.paste(text);
 }
 
@@ -197,8 +226,9 @@ describe("specification stage", () => {
     const user = userEvent.setup();
     render(<App />);
 
+    await chooseMethod(user, /^Upload a file/);
     await user.upload(
-      screen.getByLabelText("or upload a file:"),
+      await screen.findByLabelText("Choose a file"),
       new File([todoText], "todo.json", { type: "application/json" }),
     );
 
@@ -210,7 +240,8 @@ describe("specification stage", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.type(specBox(), "{{");
+    await chooseMethod(user, /^Paste/);
+    await user.type(await screen.findByRole("textbox", { name: "API description: OpenAPI, Swagger, or GraphQL" }), "{{");
     expect(fetchMock).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Continue" }));
@@ -218,6 +249,42 @@ describe("specification stage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("The specification cannot be used");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(navigation.router.push).not.toHaveBeenCalled();
+  });
+
+  it("sends an OpenAPI 3.1 specification to the server, but rejects 3.2 in the browser", async () => {
+    const fetchMock = mockFetch();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await pasteSpec(user, todoText.replace('"openapi": "3.0.3"', '"openapi": "3.2.0"'));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "OpenAPI 3.2.0 is not supported yet. ScrAPI supports OpenAPI 3.0.x and 3.1.x.",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.clear(specBox());
+    await pasteSpec(user, todoText.replace('"openapi": "3.0.3"', '"openapi": "3.1.0"'));
+    expect(await screen.findByRole("heading", { name: "Select endpoints" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads a specification from a URL in the browser and, when the browser can, keeps request headers away from ScrAPI's server", async () => {
+    const fetchMock = mockFetch();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await chooseMethod(user, /^Load from a URL/);
+    await user.click(await screen.findByText("Request headers for the URL (optional)"));
+    await user.type(screen.getByRole("textbox", { name: /One per line/ }), "Authorization: Bearer secret-token");
+    await user.type(screen.getByRole("textbox", { name: "URL" }), `${REMOTE_ORIGIN}/openapi.json`);
+    await user.click(screen.getByRole("button", { name: "Load" }));
+
+    expect(await screen.findByRole("heading", { name: "Select endpoints" })).toBeInTheDocument();
+    const [remote] = fetchMock.mock.calls.filter(([target]) => String(target).startsWith(REMOTE_ORIGIN));
+    expect(remote?.[1]?.headers).toMatchObject({ Authorization: "Bearer secret-token" });
+    const toScrapi = fetchMock.mock.calls.filter(([target]) => String(target).startsWith("/api/"));
+    expect(toScrapi.length).toBeGreaterThan(0);
+    expect(JSON.stringify(toScrapi)).not.toContain("secret-token");
   });
 
   it("stays on the specification stage when the server rejects it", async () => {
@@ -242,7 +309,7 @@ describe("endpoint and framework stages", () => {
 
     expect(navigation.router.replace).toHaveBeenCalledWith("/targets");
     expect(navigation.router.replace).toHaveBeenLastCalledWith("/");
-    expect(screen.getByRole("heading", { name: "Provide a specification" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Provide an API description" })).toBeInTheDocument();
   });
 
   it("needs at least one operation and one framework", async () => {
@@ -270,6 +337,189 @@ describe("endpoint and framework stages", () => {
     await user.click(screen.getByRole("link", { name: "Back" }));
 
     expect(await screen.findByRole("button", { name: "Next" })).toBeEnabled();
+  });
+});
+
+describe("choosing the input method", () => {
+  const box = () => screen.queryByRole("textbox", { name: "API description: OpenAPI, Swagger, or GraphQL" });
+
+  it("shows the three methods first, and no fields", () => {
+    mockFetch();
+    render(<App />);
+
+    const methods = screen.getByRole("group", { name: "How do you want to provide the API description?" });
+    expect(within(methods).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      expect.stringMatching(/^Paste/) as string,
+      expect.stringMatching(/^Upload a file/) as string,
+      expect.stringMatching(/^Load from a URL/) as string,
+    ]);
+    expect(box()).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Choose a file")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "URL" })).not.toBeInTheDocument();
+  });
+
+  it("opens only the chosen form, focused, and opens a card with the keyboard", async () => {
+    mockFetch();
+    const user = userEvent.setup();
+    render(<App />);
+
+    screen.getByRole("button", { name: /^Load from a URL/ }).focus();
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByRole("textbox", { name: "URL" })).toHaveFocus();
+    expect(box()).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Choose a file")).not.toBeInTheDocument();
+  });
+
+  it("resets the fields and errors on Back, and returns focus to the card", async () => {
+    mockFetch();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await chooseMethod(user, /^Paste/);
+    await user.type(await screen.findByRole("textbox", { name: "API description: OpenAPI, Swagger, or GraphQL" }), "{{");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    const card = await screen.findByRole("button", { name: /^Paste/ });
+    expect(card).toHaveFocus();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.click(card);
+    expect(await screen.findByRole("textbox", { name: "API description: OpenAPI, Swagger, or GraphQL" })).toHaveValue("");
+  });
+
+  it("cancels a URL load in progress on Back", async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_target: string | URL, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        return new Promise<Response>(() => undefined);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await chooseMethod(user, /^Load from a URL/);
+    await user.type(await screen.findByRole("textbox", { name: "URL" }), `${REMOTE_ORIGIN}/openapi.json`);
+    await user.click(screen.getByRole("button", { name: "Load" }));
+    expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(signal?.aborted).toBe(true);
+    expect(await screen.findByRole("button", { name: /^Load from a URL/ })).toBeInTheDocument();
+  });
+
+  it("keeps the chosen form and its text when coming back from endpoint selection", async () => {
+    mockFetch();
+    const user = userEvent.setup();
+    render(<App />);
+    await pasteSpec(user);
+    await screen.findByRole("heading", { name: "Select endpoints" });
+
+    await user.click(screen.getByRole("link", { name: "Change specification" }));
+
+    expect(
+      await screen.findByRole("textbox", { name: "API description: OpenAPI, Swagger, or GraphQL" }),
+    ).toHaveValue(todoText);
+  });
+});
+
+describe("GraphQL", () => {
+  const sdl = readFileSync(join(process.cwd(), "samples/specs/books.graphql"), "utf8");
+  const graphqlOperations = listGraphqlOperations(buildSchema(sdl));
+  const graphqlValid: GraphqlValidateSuccess = {
+    ok: true,
+    kind: "graphql",
+    schema: sdl,
+    info: { title: "GraphQL API", typeCount: 11, subscriptionCount: 1 },
+    operations: graphqlOperations,
+    groups: groupGraphqlOperations(graphqlOperations),
+  };
+
+  function mockGraphqlFetch() {
+    const fetchMock = vi.fn<(url: string | URL, init?: RequestInit) => Promise<Response>>((target, init) => {
+      switch (String(target)) {
+        case "/api/graphql/validate":
+          return Promise.resolve(Response.json(graphqlValid));
+        case "/api/graphql/generate": {
+          const request = jsonBody(init) as GraphqlGenerateRequest;
+          const result: GraphqlGenerateSuccess = {
+            ok: true,
+            kind: "graphql",
+            options: request.options,
+            archiveRoot: "ApiClient",
+            destinationRoot: "src/ApiClient",
+            operations: graphqlOperations.filter((operation) =>
+              request.selection.some((key) => key.field === operation.field && key.operationType === operation.operationType),
+            ),
+            files: [
+              {
+                archivePath: "ApiClient/Operations.graphql",
+                destinationPath: "src/ApiClient/Operations.graphql",
+                content: "query Books {\n  books {\n    id\n  }\n}\n",
+              },
+            ],
+          };
+          return Promise.resolve(Response.json(result));
+        }
+        default:
+          return Promise.reject(new Error(`unexpected request to ${String(target)}`));
+      }
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("validates pasted SDL as GraphQL, offers queries and mutations, and generates from the server's schema", async () => {
+    const fetchMock = mockGraphqlFetch();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await pasteSpec(user, sdl);
+
+    expect(await screen.findByRole("heading", { name: "Select endpoints" })).toBeInTheDocument();
+    expect(screen.getByText(/subscription field is not generated/)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select all in Queries" })).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Select all in Mutations" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.click(await screen.findByRole("checkbox", { name: /^C# \/ \.NET/ }));
+    await user.click(screen.getByRole("button", { name: "Generate" }));
+
+    expect(await screen.findByRole("heading", { name: "Implement" })).toBeInTheDocument();
+    const [generation] = fetchMock.mock.calls
+      .filter(([target]) => String(target) === "/api/graphql/generate")
+      .map(([, init]) => jsonBody(init) as GraphqlGenerateRequest);
+    expect(generation?.schema).toBe(sdl);
+    expect(generation?.selection).toEqual([
+      { operationType: "mutation", field: "addBook" },
+      { operationType: "mutation", field: "deleteBook" },
+    ]);
+  });
+});
+
+describe("converted input", () => {
+  it("sends YAML to the server without a browser check, shows the conversion, and generates from the server's JSON", async () => {
+    const yamlText = readFileSync(join(process.cwd(), "samples/specs/todo.yaml"), "utf8");
+    const fetchMock = mockFetch({ validate: { ...valid, conversions: ["yaml"], spec: todoText } });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await pasteSpec(user, yamlText);
+
+    expect(await screen.findByText(/Converted from YAML to OpenAPI JSON/)).toBeInTheDocument();
+    expect(requestsTo(fetchMock, "/api/validate")).toEqual([{ spec: yamlText }]);
+    await user.click(screen.getByRole("button", { name: "Select all" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.click(await screen.findByRole("checkbox", { name: /^C# \/ \.NET/ }));
+    await user.click(screen.getByRole("button", { name: "Generate" }));
+
+    await screen.findByRole("heading", { name: "Implement" });
+    const [generation] = requestsTo(fetchMock, "/api/generate") as GenerateRequest[];
+    expect(generation?.spec).toBe(todoText);
   });
 });
 
@@ -332,7 +582,9 @@ describe("generation and implementation stages", () => {
     await reachImplement(user);
 
     await user.click(screen.getByRole("button", { name: /^Download ZIP/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The ZIP file could not be created.");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The ZIP file could not be created");
+    expect(alert).toHaveTextContent("The server is busy creating other ZIP files.");
 
     archive.ok = true;
     await user.click(screen.getByRole("button", { name: /^Download ZIP/ }));
