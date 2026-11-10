@@ -21,7 +21,7 @@ vi.mock("node:dns", async (importOriginal) => {
   };
 });
 
-const { fetchUrl, isPublicAddress } = await import("./fetch-url");
+const { fetchUrl, isPublicAddress, unreachableMessage } = await import("./fetch-url");
 
 let server: Server;
 let origin: string;
@@ -107,6 +107,13 @@ describe("fetchUrl", () => {
   });
 
   describe("with SCRAPI_ALLOW_PRIVATE_URLS=true", () => {
+    it("says when nothing answers on the port", async () => {
+      vi.stubEnv("SCRAPI_ALLOW_PRIVATE_URLS", "true");
+      // Port 1 is reserved and closed on test machines.
+      const result = await fetchUrl("http://127.0.0.1:1/spec.json", "document", {});
+      expect(result).toMatchObject({ ok: false, errors: [{ code: "url-unreachable", message: expect.stringContaining("refused") as string }] });
+    });
+
     it("loads a document with GET and forwards the user's headers", async () => {
       vi.stubEnv("SCRAPI_ALLOW_PRIVATE_URLS", "true");
 
@@ -169,5 +176,31 @@ describe("fetchUrl", () => {
       ok: false,
       errors: [{ code: "invalid-url" }],
     });
+  });
+});
+
+describe("unreachableMessage", () => {
+  function networkError(code: string): Error {
+    return Object.assign(new Error(`connect ${code} 203.0.113.9:443 secret.example.com`), { code });
+  }
+
+  it.each([
+    ["ENOTFOUND", "could not find this host name"],
+    ["EAI_AGAIN", "could not find this host name"],
+    ["ECONNREFUSED", "refused the connection"],
+    ["ECONNRESET", "closed the connection"],
+    ["EHOSTUNREACH", "no network route"],
+    ["CERT_HAS_EXPIRED", "certificate is not trusted"],
+    ["DEPTH_ZERO_SELF_SIGNED_CERT", "certificate is not trusted"],
+    ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "certificate is not trusted"],
+    ["EWHATEVER", "could not reach this URL"],
+  ])("explains %s without quoting the address", (code, expected) => {
+    const message = unreachableMessage(networkError(code));
+    expect(message).toContain(expected);
+    expect(message).not.toContain("secret.example.com");
+  });
+
+  it("falls back to the general message for values that are not errors", () => {
+    expect(unreachableMessage("boom")).toContain("could not reach this URL");
   });
 });

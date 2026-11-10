@@ -48,7 +48,9 @@ function addMissingResponses(spec: JsonObject): void {
 /**
  * Each operation keeps only its first tag. Generators emit one API class per
  * tag, so an operation with several tags would be generated several times
- * (and duplicate TypeScript exports would not compile).
+ * (and duplicate TypeScript exports would not compile). Blank tags are
+ * skipped, as in the operation list, which shows such operations under "Other";
+ * an operation with only blank tags keeps none.
  */
 function keepFirstTagOnly(spec: JsonObject): void {
   if (!isJsonObject(spec.paths)) return;
@@ -56,9 +58,10 @@ function keepFirstTagOnly(spec: JsonObject): void {
     if (!isJsonObject(pathItem)) continue;
     for (const method of HTTP_METHODS) {
       const operation = pathItem[method];
-      if (isJsonObject(operation) && Array.isArray(operation.tags) && operation.tags.length > 1) {
-        operation.tags = operation.tags.slice(0, 1);
-      }
+      if (!isJsonObject(operation) || !Array.isArray(operation.tags)) continue;
+      const first = operation.tags.find((tag) => typeof tag === "string" && tag.trim() !== "");
+      if (first === undefined) delete operation.tags;
+      else operation.tags = [first];
     }
   }
 }

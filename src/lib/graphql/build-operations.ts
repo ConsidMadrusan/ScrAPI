@@ -1,4 +1,5 @@
 import {
+  concatAST,
   getNamedType,
   isInterfaceType,
   isLeafType,
@@ -25,6 +26,14 @@ export const SELECTION_DEPTH = 2;
 /** Raised when an operation that ScrAPI built does not validate against the schema. */
 export class OperationBuildError extends Error {
   override name = "OperationBuildError";
+
+  /** `operationId`: the operation that could not be built, e.g. `query books`. */
+  constructor(
+    readonly operationId: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 /**
@@ -36,26 +45,31 @@ export class OperationBuildError extends Error {
  *   and of nested object types down to SELECTION_DEPTH;
  * - nested fields that need arguments without defaults are skipped;
  * - interfaces and unions select `__typename` plus one inline fragment with
- *   the leaf fields of each possible type;
+ *   the leaf fields of each possible type (an interface's own fields are
+ *   selected once, outside the fragments);
+ * - a leaf field that two possible types declare with different types (for
+ *   example `id: ID!` and `id: ID`) gets an alias per type (`idOnBook: id`),
+ *   because GraphQL does not allow one response key with two types;
  * - a type with nothing selectable selects `__typename`, which every type has.
  *
- * Recursive types are cut off by the depth limit. The document is validated
- * against the schema before it is returned.
+ * Recursive types are cut off by the depth limit. Each operation is validated
+ * against the schema on its own, so a failure names the operation.
  */
 export function buildOperations(schema: GraphQLSchema, operations: readonly GraphqlOperation[]): DocumentNode {
-  const text = operations.map((operation) => buildOperation(schema, operation)).join("\n\n");
-  const document = parse(text);
-  const errors = validate(schema, document);
-  if (errors.length > 0) {
-    throw new OperationBuildError(errors[0]?.message ?? "The operations do not match the schema.");
-  }
-  return document;
+  return concatAST(
+    operations.map((operation) => {
+      const document = parse(buildOperation(schema, operation));
+      const [error] = validate(schema, document);
+      if (error !== undefined) throw new OperationBuildError(operation.id, error.message);
+      return document;
+    }),
+  );
 }
 
 function buildOperation(schema: GraphQLSchema, operation: GraphqlOperation): string {
   const root = operation.operationType === "query" ? schema.getQueryType() : schema.getMutationType();
   const field = root?.getFields()[operation.field];
-  if (field === undefined) throw new OperationBuildError(`The schema has no ${operation.id} field.`);
+  if (field === undefined) throw new OperationBuildError(operation.id, `The schema has no ${operation.id} field.`);
 
   const variables = field.args.map((argument) => `$${argument.name}: ${argument.type.toString()}`);
   const args = field.args.map((argument) => `${argument.name}: $${argument.name}`);
@@ -72,7 +86,7 @@ function selectionSet(schema: GraphQLSchema, type: GraphQLOutputType, depth: num
   const named = getNamedType(type);
   if (isLeafType(named)) return "";
   if (isUnionType(named)) {
-    return braces(["__typename", ...named.getTypes().map((member) => inlineFragment(member))]);
+    return braces(["__typename", ...inlineFragments(named.getTypes(), new Set())]);
   }
   if (!isObjectType(named) && !isInterfaceType(named)) return braces(["__typename"]);
 
@@ -86,17 +100,47 @@ function selectionSet(schema: GraphQLSchema, type: GraphQLOutputType, depth: num
     }
   }
   if (isInterfaceType(named)) {
+    // Fields of the interface itself are already selected above, with the interface's types.
+    const selected = new Set(Object.keys(named.getFields()));
     selections.unshift("__typename");
-    for (const implementation of schema.getPossibleTypes(named)) selections.push(inlineFragment(implementation));
+    selections.push(...inlineFragments(schema.getPossibleTypes(named), selected));
   }
   return braces(selections.length > 0 ? selections : ["__typename"]);
 }
 
-function inlineFragment(type: GraphQLObjectType): string {
-  const leaves = Object.values(type.getFields())
-    .filter((field) => !needsArguments(field) && isLeafType(getNamedType(field.type)))
-    .map((field) => field.name);
-  return `... on ${type.name} ${braces(leaves.length > 0 ? leaves : ["__typename"])}`;
+/**
+ * One inline fragment per possible type with its leaf fields, leaving out
+ * `alreadySelected`. Fields whose type differs between the possible types are
+ * aliased per type, so their response keys cannot conflict.
+ */
+function inlineFragments(types: readonly GraphQLObjectType[], alreadySelected: ReadonlySet<string>): string[] {
+  const leavesOf = (type: GraphQLObjectType) =>
+    Object.values(type.getFields()).filter(
+      (field) => !needsArguments(field) && isLeafType(getNamedType(field.type)) && !alreadySelected.has(field.name),
+    );
+
+  const typesByName = new Map<string, Set<string>>();
+  for (const type of types) {
+    for (const field of leavesOf(type)) {
+      const declared = typesByName.get(field.name) ?? new Set<string>();
+      declared.add(field.type.toString());
+      typesByName.set(field.name, declared);
+    }
+  }
+  const conflicting = new Set([...typesByName].filter(([, declared]) => declared.size > 1).map(([name]) => name));
+  // Response keys in use at this level, so an alias never reuses one.
+  const used = new Set([...alreadySelected, ...typesByName.keys()]);
+
+  return types.map((type) => {
+    const selections = leavesOf(type).map((field) => {
+      if (!conflicting.has(field.name)) return field.name;
+      let alias = `${field.name}On${type.name}`;
+      while (used.has(alias)) alias = `${alias}_`;
+      used.add(alias);
+      return `${alias}: ${field.name}`;
+    });
+    return `... on ${type.name} ${braces(selections.length > 0 ? selections : ["__typename"])}`;
+  });
 }
 
 function needsArguments(field: GraphQLField<unknown, unknown>): boolean {

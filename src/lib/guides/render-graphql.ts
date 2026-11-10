@@ -458,7 +458,18 @@ function preferred(operations: readonly GraphqlOperation[]): GraphqlOperation[] 
   return [...operations].sort((a, b) => rank(a) - rank(b));
 }
 
-/** An operation whose method is declared in the generated SDK (`Books(variables?: …)`). */
+/**
+ * An operation whose method is declared in the generated SDK. Expects the
+ * `getSdk` object of `typescript-generic-sdk` 5.0.1, one indented method per
+ * operation, named like the operation:
+ *
+ * ```ts
+ *     Books(variables?: BooksQueryVariables, options?: C): Promise<BooksQuery> {
+ * ```
+ *
+ * The `?` after `variables` means every variable is optional. Re-check this
+ * when the GraphQL Code Generator versions change (CLAUDE.md, "GraphQL targets").
+ */
 function typescriptUsage(result: GraphqlGenerateSuccess): GraphqlUsage | undefined {
   const sdk = result.files.find((file) => file.archivePath.endsWith("/graphql.ts"))?.content ?? "";
   for (const operation of preferred(result.operations)) {
@@ -476,6 +487,14 @@ function typescriptUsage(result: GraphqlGenerateSuccess): GraphqlUsage | undefin
  * An operation defined in the generated Operations.graphql, which StrawberryShake
  * turns into `client.<Name>`. Its `ExecuteAsync` takes every variable as a
  * parameter named like the variable, so nullable variables are passed as `null`.
+ *
+ * Expects the document as `print()` from `graphql` writes the operations
+ * ScrAPI builds (build-operations.ts): one definition per line start, with
+ * variables that have no default values, so splitting them at commas is safe:
+ *
+ * ```graphql
+ * query Books($genre: Genre, $first: Int) {
+ * ```
  */
 function csharpUsage(result: GraphqlGenerateSuccess): GraphqlUsage | undefined {
   const document = result.files.find((file) => file.archivePath.endsWith("/Operations.graphql"))?.content ?? "";

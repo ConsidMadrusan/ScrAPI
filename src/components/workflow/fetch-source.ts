@@ -1,6 +1,6 @@
 import { getIntrospectionQuery } from "graphql";
 import { looksLikeOpenApiDocument, type SourceKind } from "@/lib/source-kind";
-import { formatMegabytes, MAX_SPEC_BYTES } from "@/lib/validation/limits";
+import { formatMegabytes, MAX_SPEC_BYTES, URL_LOAD_TIMEOUT_MS } from "@/lib/validation/limits";
 import { readTextUpTo } from "@/lib/validation/read-request";
 import { fetchSourceResponseSchema, type FetchSourceResponse, type Problem } from "@/lib/validation/responses";
 
@@ -13,8 +13,8 @@ import { fetchSourceResponseSchema, type FetchSourceResponse, type Problem } fro
  * URL; they are never stored or logged.
  */
 
-/** How long the browser waits for a URL before giving up. */
-export const URL_LOAD_TIMEOUT_MS = 20_000;
+/** How long the browser waits for a URL before giving up (the same limit as the server fallback). */
+export { URL_LOAD_TIMEOUT_MS };
 
 /** Most request headers a user may add for loading a URL. */
 const MAX_HEADERS = 20;

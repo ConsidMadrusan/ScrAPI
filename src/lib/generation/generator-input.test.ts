@@ -27,6 +27,14 @@ describe("prepareGeneratorInput: tags", () => {
     });
   });
 
+  it("skips blank tags, as the operation list does", () => {
+    const result = prepareGeneratorInput({
+      openapi: "3.0.3",
+      paths: { "/x": { get: { tags: ["", "b"], responses: {} }, post: { tags: [" "], responses: {} } } },
+    });
+    expect(result.paths).toEqual({ "/x": { get: { tags: ["b"], responses: {} }, post: { responses: {} } } });
+  });
+
   it("does not modify its input", () => {
     const before = structuredClone(spec);
     prepareGeneratorInput(spec);

@@ -99,7 +99,7 @@ describe("generateClient", () => {
   });
 
   it.each([
-    [{ status: "failed", exitCode: 1 }, 422, "generation-failed"],
+    [{ status: "failed", exitCode: 1, details: [] }, 422, "generation-failed"],
     [{ status: "timeout" }, 422, "generation-timeout"],
     [{ status: "output-too-large" }, 422, "output-too-large"],
     [{ status: "busy" }, 503, "generator-busy"],
@@ -118,11 +118,37 @@ describe("generateClient", () => {
     expect(existsSync(workDir())).toBe(false);
   });
 
-  it("cleans up when collecting the output throws", async () => {
+  it("reports a run without an output folder as an empty result and cleans up", async () => {
     generatorThat(() => Promise.resolve({ status: "ok" })); // no output folder at all
 
-    await expect(generateClient(prepared)).rejects.toThrow();
+    expect(await generateClient(prepared)).toEqual({
+      ok: false,
+      status: 500,
+      errors: [expect.objectContaining({ code: "generation-failed" })],
+    });
     expect(existsSync(workDir())).toBe(false);
+  });
+
+  it("shows the generator's own validation errors, one problem each", async () => {
+    generatorThat(() =>
+      Promise.resolve({
+        status: "failed",
+        exitCode: 1,
+        details: ["attribute paths.'/x'(get).responses is missing", "attribute info.title is missing"],
+      }),
+    );
+
+    expect(await generateClient(prepared)).toEqual({
+      ok: false,
+      status: 422,
+      errors: [
+        {
+          code: "generation-failed",
+          message: "The generator rejected the specification: attribute paths.'/x'(get).responses is missing.",
+        },
+        { code: "generation-failed", message: "The generator rejected the specification: attribute info.title is missing." },
+      ],
+    });
   });
 
   it("reports an empty result as a failure", async () => {
@@ -141,7 +167,7 @@ describe("generateClient", () => {
   });
 
   it("logs metadata only, never specification content", async () => {
-    generatorThat(() => Promise.resolve({ status: "failed", exitCode: 2 }));
+    generatorThat(() => Promise.resolve({ status: "failed", exitCode: 2, details: ["attribute x is missing"] }));
 
     await generateClient(prepared);
 

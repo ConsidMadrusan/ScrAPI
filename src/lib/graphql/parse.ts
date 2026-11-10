@@ -6,9 +6,9 @@ import {
   type GraphQLSchema,
   type IntrospectionQuery,
 } from "graphql";
-import type { SpecResult } from "@/lib/openapi/errors";
+import { capProblems, type SpecError, type SpecResult } from "@/lib/openapi/errors";
 import { isJsonObject, type JsonObject, type JsonValue } from "@/lib/openapi/json";
-import { exceedsDepth } from "@/lib/openapi/parse";
+import { exceedsDepth, jsonSyntaxError } from "@/lib/openapi/parse";
 import { looksLikeJson } from "@/lib/openapi/convertible";
 import { MAX_SPEC_DEPTH } from "@/lib/validation/limits";
 
@@ -17,9 +17,6 @@ import { MAX_SPEC_DEPTH } from "@/lib/validation/limits";
  * input; real schemas, even large public ones, stay far below it.
  */
 const MAX_SDL_TOKENS = 1_000_000;
-
-/** Most schema problems reported at once. */
-const MAX_SCHEMA_ERRORS = 20;
 
 /**
  * Builds a schema from SDL or from an introspection result (`{ "data": { "__schema" } }`
@@ -42,13 +39,13 @@ export function parseGraphqlSchema(text: string): SpecResult<GraphQLSchema> {
 
   const problems = validateSchema(schema);
   if (problems.length > 0) {
-    return { ok: false, errors: problems.slice(0, MAX_SCHEMA_ERRORS).map((problem) => graphqlProblem(problem)) };
+    return { ok: false, errors: capProblems(problems.map((problem) => graphqlProblem(problem))) };
   }
   return { ok: true, value: schema };
 }
 
 class SchemaInputError extends Error {
-  constructor(readonly problem: { code: "not-json" | "not-introspection" | "too-deep"; message: string }) {
+  constructor(readonly problem: SpecError) {
     super(problem.message);
   }
 }
@@ -57,8 +54,8 @@ function fromIntrospection(content: string): GraphQLSchema {
   let value: JsonValue;
   try {
     value = JSON.parse(content) as JsonValue;
-  } catch {
-    throw new SchemaInputError({ code: "not-json", message: "The schema is not valid JSON." });
+  } catch (error) {
+    throw new SchemaInputError(jsonSyntaxError(error, content, "schema"));
   }
   if (!isJsonObject(value)) {
     throw new SchemaInputError({ code: "not-introspection", message: introspectionHint() });

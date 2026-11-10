@@ -109,10 +109,20 @@ function generatorFailure(
     case "output-too-large":
       return outputTooLarge();
     case "failed":
+      if (outcome.details.length > 0) {
+        return {
+          ok: false,
+          status: 422,
+          errors: outcome.details.map((detail) => ({
+            code: "generation-failed",
+            message: `The generator rejected the specification: ${detail}.`,
+          })),
+        };
+      }
       return failure(
         422,
         "generation-failed",
-        "The generator could not process this specification and selection.",
+        "The generator could not process this specification and selection. Select fewer operations to find the one that causes the problem, then check it for constructs the generator does not support.",
       );
     case "busy":
       return failure(503, "generator-busy", "The server is busy generating other clients. Try again in a moment.");

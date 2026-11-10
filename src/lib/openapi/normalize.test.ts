@@ -93,3 +93,16 @@ describe("normalizeSpecification", () => {
     expect(isJsonObject(document)).toBe(true);
   });
 });
+
+describe("unquoted YAML versions", () => {
+  it("converts Swagger 2.0 written as `swagger: 2.0`, which YAML reads as a number", () => {
+    const yaml = ["swagger: 2.0", "info:", "  title: T", "  version: '1'", "paths:", "  /x:", "    get:", "      responses:", "        '200':", "          description: ok", ""].join("\n");
+
+    const result = normalizeSpecification(yaml);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.conversions).toEqual(["yaml", "swagger-2"]);
+    expect(JSON.parse(result.value.text)).toMatchObject({ openapi: expect.stringMatching(/^3\.0\./) as string });
+  });
+});

@@ -149,13 +149,52 @@ describe("parseSpecification", () => {
         errors: [
           {
             code: "invalid-version",
-            message: 'The "openapi" field must be a string such as "3.0.3", not a number.',
+            message:
+              'The "openapi" field must be a string such as "3.0.3", not a number. In YAML, put the version in quotes, for example openapi: "3.0.0".',
             location: "openapi",
           },
         ],
       });
     },
   );
+
+  it("suggests the quoted form of an unquoted YAML version such as 3.1", () => {
+    const result = parseSpecification('{"openapi": 3.1, "info": {}, "paths": {}}');
+    expect(result.ok ? "" : result.errors[0]?.message).toContain('openapi: "3.1.0"');
+  });
+
+  it("does not suggest YAML quoting for other wrong types", () => {
+    const result = parseSpecification('{"openapi": true, "info": {}, "paths": {}}');
+    expect(result.ok ? "" : result.errors[0]?.message).toBe('The "openapi" field must be a string such as "3.0.3", not a boolean.');
+  });
+
+  it("reports every unresolved reference beyond the shown ones in one extra line", () => {
+    const properties = Object.fromEntries(
+      Array.from({ length: 25 }, (_, index) => [`p${String(index)}`, { $ref: `#/components/schemas/Missing${String(index)}` }]),
+    );
+    const text = JSON.stringify({
+      openapi: "3.0.3",
+      info: { title: "T", version: "1" },
+      paths: {},
+      components: { schemas: { Thing: { type: "object", properties } } },
+    });
+
+    const result = parseSpecification(text);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toHaveLength(21);
+    expect(result.errors.slice(0, 20).every((error) => error.code === "unresolved-ref")).toBe(true);
+    expect(result.errors[20]).toEqual({
+      code: "more-problems",
+      message: "…and 5 more problems. Fix the ones above and check again.",
+    });
+  });
+
+  it("names YAML as accepted input when the document is not OpenAPI at all", () => {
+    const result = parseSpecification('{"hello": "world"}');
+    expect(result.ok ? "" : result.errors[0]?.message).toContain("(JSON or YAML)");
+  });
 
   it.each(["3.0.0", "3.0.4", "3.1.0", "3.1.2"])("accepts supported version %s", (version) => {
     expect(parseSpecification(spec({ openapi: version })).ok).toBe(true);

@@ -4,7 +4,7 @@ import type { JsonObject } from "@/lib/openapi/json";
 import { validateSpecification } from "@/lib/openapi/validate";
 import { filterSpec, SpecFilterError } from "@/lib/selection/filter-spec";
 import { resolveSelection, type OperationSummary } from "@/lib/selection/operations";
-import type { Problem } from "@/lib/validation/problems";
+import { listSome, type Problem } from "@/lib/validation/problems";
 import type { GenerateRequest, GenerationOptions } from "@/lib/validation/requests";
 
 export interface PreparedGeneration {
@@ -38,7 +38,7 @@ export async function prepareGeneration(request: GenerateRequest): Promise<Prepa
           ? { code: "empty-selection", message: "Select at least one operation." }
           : {
               code: "unknown-operations",
-              message: `These operations are not in the specification: ${selection.unknownIds.join(", ")}.`,
+              message: `These operations are not in the specification: ${listSome(selection.unknownIds)}. The specification may have changed since you selected them. Go back and select the operations again.`,
             },
       ],
     };

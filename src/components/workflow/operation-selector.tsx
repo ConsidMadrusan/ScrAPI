@@ -54,6 +54,9 @@ export function OperationSelector({
     onSelectedChange(next);
   };
 
+  // While searching, "select all" and the group checkboxes act on the matches only.
+  const filtering = query.trim().length > 0;
+
   const visibleGroups = groups
     .map((group) => ({ group, visibleIds: group.operationIds.filter((id) => matches.has(id)) }))
     .filter(({ visibleIds }) => visibleIds.length > 0);
@@ -78,11 +81,13 @@ export function OperationSelector({
         </div>
         <Button
           variant="outline"
+          disabled={filtering && matches.size === 0}
           onClick={() => {
-            onSelectedChange(new Set(operations.map((operation) => operation.id)));
+            if (filtering) setMany([...matches], true);
+            else onSelectedChange(new Set(operations.map((operation) => operation.id)));
           }}
         >
-          Select all
+          {filtering ? "Select all matching" : "Select all"}
         </Button>
         <Button
           variant="outline"
@@ -104,7 +109,10 @@ export function OperationSelector({
 
       {visibleGroups.map(({ group, visibleIds }, groupIndex) => {
         const selectedInGroup = group.operationIds.filter((id) => selected.has(id)).length;
-        const allSelected = selectedInGroup === group.operationIds.length;
+        // The checkbox covers what is shown: every operation, or only the matches while searching.
+        const covered = filtering ? visibleIds : group.operationIds;
+        const coveredSelected = covered.filter((id) => selected.has(id)).length;
+        const allSelected = coveredSelected === covered.length;
         const groupCheckboxId = `${idPrefix}-group-${String(groupIndex)}`;
 
         return (
@@ -116,12 +124,12 @@ export function OperationSelector({
                 type="checkbox"
                 checked={allSelected}
                 ref={(element) => {
-                  if (element) element.indeterminate = selectedInGroup > 0 && !allSelected;
+                  if (element) element.indeterminate = coveredSelected > 0 && !allSelected;
                 }}
                 onChange={(event) => {
-                  setMany(group.operationIds, event.target.checked);
+                  setMany(covered, event.target.checked);
                 }}
-                aria-label={`Select all in ${group.name}`}
+                aria-label={filtering ? `Select all matching in ${group.name}` : `Select all in ${group.name}`}
               />
               <label htmlFor={groupCheckboxId} className="font-medium">
                 {group.name}

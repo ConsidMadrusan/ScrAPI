@@ -123,6 +123,38 @@ describe("OperationSelector", () => {
     expect(status()).toHaveTextContent("1 of 7 operations selected");
   });
 
+  it("selects only the matching operations while searching", async () => {
+    const { user } = setup();
+    const search = screen.getByRole("searchbox", { name: "Search operations" });
+
+    await user.type(search, "createbook");
+    await user.click(screen.getByRole("button", { name: "Select all matching" }));
+    expect(status()).toHaveTextContent("1 of 7 operations selected");
+    expect(screen.getByRole("checkbox", { name: "Select all matching in books" })).toBeChecked();
+
+    await user.clear(search);
+    const books = screen.getByRole("checkbox", { name: "Select all in books" });
+    expect(books).not.toBeChecked();
+    expect((books as HTMLInputElement).indeterminate).toBe(true);
+    expect(screen.getByRole("button", { name: "Select all" })).toBeInTheDocument();
+  });
+
+  it("unchecks only the matching operations of a group while searching", async () => {
+    const { user } = setup();
+    await user.click(screen.getByRole("button", { name: "Select all" }));
+
+    await user.type(screen.getByRole("searchbox", { name: "Search operations" }), "createbook");
+    await user.click(screen.getByRole("checkbox", { name: "Select all matching in books" }));
+
+    expect(status()).toHaveTextContent("6 of 7 operations selected");
+  });
+
+  it("offers no select-all when nothing matches the search", async () => {
+    const { user } = setup();
+    await user.type(screen.getByRole("searchbox", { name: "Search operations" }), "no such thing");
+    expect(screen.getByRole("button", { name: "Select all matching" })).toBeDisabled();
+  });
+
   it("can be operated with the keyboard alone", async () => {
     const { user } = setup();
 

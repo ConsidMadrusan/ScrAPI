@@ -20,6 +20,12 @@ interface Pattern {
   typeDeclaration: RegExp;
 }
 
+/**
+ * How each target declares API classes and methods. Verified against the
+ * output of OpenAPI Generator 7.26.0 (CLAUDE.md, "Generated output targets");
+ * re-check these patterns when the pinned version changes. When a pattern no
+ * longer matches, the guide falls back to `noUsageStep` instead of guessing.
+ */
 const PATTERNS: Record<"axios" | "fetch" | "angular" | "csharp", Pattern> = {
   axios: {
     methodName: camelCase,
@@ -57,8 +63,7 @@ export function findUsageExample(result: OpenApiGenerateSuccess): UsageExample |
   );
 
   for (const operation of candidates) {
-    if (operation.operationId === undefined) continue;
-    const methodName = pattern.methodName(operation.operationId);
+    const methodName = pattern.methodName(operation.operationId ?? generatedOperationId(operation));
     if (!/^[A-Za-z_]\w*$/.test(methodName)) continue;
 
     for (const file of result.files) {
@@ -93,6 +98,17 @@ function findIn(file: GeneratedFile, pattern: Pattern, methodName: string) {
   const typeName = pattern.typeDeclaration.exec(file.content)?.[1];
   if (!declaration || typeName === undefined) return undefined;
   return { typeName, parameters: (declaration[1] ?? "").trim() };
+}
+
+/**
+ * The operationId OpenAPI Generator derives for an operation without one:
+ * the path's words and the method in camelCase, with `root` for `/`. Verified
+ * with 7.26.0 for every target: `GET /users/{user-id}/todo_items` →
+ * `usersUserIdTodoItemsGet`, `GET /` → `rootGet`, `POST /v1.2/status` → `v12StatusPost`.
+ */
+export function generatedOperationId(operation: Pick<OperationSummary, "method" | "path">): string {
+  const path = operation.path === "/" ? "root" : operation.path;
+  return camelCase(`${path} ${operation.method}`);
 }
 
 function words(text: string): string[] {

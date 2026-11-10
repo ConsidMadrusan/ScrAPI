@@ -5,7 +5,7 @@ import { request as httpRequest, type IncomingMessage, type RequestOptions } fro
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 import { getIntrospectionQuery } from "graphql";
-import { formatMegabytes, MAX_SPEC_BYTES } from "@/lib/validation/limits";
+import { formatMegabytes, MAX_SPEC_BYTES, MAX_URL_REDIRECTS, URL_LOAD_TIMEOUT_MS } from "@/lib/validation/limits";
 import type { Problem } from "@/lib/validation/responses";
 
 /**
@@ -31,8 +31,9 @@ export interface FetchedResponse {
 
 export type FetchUrlResult = { ok: true; value: FetchedResponse } | { ok: false; errors: Problem[] };
 
-export const SERVER_FETCH_TIMEOUT_MS = 20_000;
-const MAX_REDIRECTS = 5;
+/** Same limit as in the browser, so both ways of loading behave alike. */
+export const SERVER_FETCH_TIMEOUT_MS = URL_LOAD_TIMEOUT_MS;
+const MAX_REDIRECTS = MAX_URL_REDIRECTS;
 
 /** Request headers ScrAPI sets itself or that would change the connection; users cannot set them. */
 const RESERVED_HEADERS = new Set([
@@ -120,6 +121,10 @@ export async function fetchUrl(
     for (let redirects = 0; ; redirects += 1) {
       const response = await send(url, kind, headers, combined);
       const location = response.headers.location;
+      // Redirects keep the request as it is: an introspection POST is sent again
+      // as a POST, even after 301/302 (where browsers switch to GET). That is
+      // intended: endpoints that redirect, e.g. from http:// to https://, still
+      // answer the introspection query instead of failing with a GET.
       if (response.statusCode !== undefined && response.statusCode >= 300 && response.statusCode < 400 && location) {
         response.resume();
         if (redirects >= MAX_REDIRECTS) {
@@ -142,11 +147,34 @@ export async function fetchUrl(
         `The URL did not answer within ${String(SERVER_FETCH_TIMEOUT_MS / 1000)} seconds. Try again, or download the file and upload it.`,
       );
     }
-    return failure(
-      "url-unreachable",
-      "ScrAPI's server could not reach this URL. Check the address, or download the file and upload it.",
-    );
+    return failure("url-unreachable", unreachableMessage(error));
   }
+}
+
+/**
+ * Why the server could not reach the URL, from the network error's code only
+ * (never its message, which contains the address). Unknown codes get the
+ * general message.
+ */
+export function unreachableMessage(error: unknown): string {
+  const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "";
+  const advice = "Check the address, or download the file and upload it.";
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+    return `ScrAPI's server could not find this host name. ${advice}`;
+  }
+  if (code === "ECONNREFUSED") {
+    return `The host refused the connection: nothing answers on that port. ${advice}`;
+  }
+  if (code === "ECONNRESET" || code === "EPIPE") {
+    return `The host closed the connection before answering. Try again, or download the file and upload it.`;
+  }
+  if (code === "EHOSTUNREACH" || code === "ENETUNREACH") {
+    return `ScrAPI's server has no network route to this host. ${advice}`;
+  }
+  if (code.startsWith("CERT_") || code.startsWith("ERR_TLS_") || code.includes("SELF_SIGNED") || code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE") {
+    return "The host's HTTPS certificate is not trusted (for example self-signed or expired). Download the file and upload it instead.";
+  }
+  return `ScrAPI's server could not reach this URL. ${advice}`;
 }
 
 function checkUrl(text: string): URL {
@@ -246,6 +274,12 @@ function send(url: URL, kind: FetchKind, headers: Record<string, string>, signal
 
 function readBody(response: IncomingMessage, signal: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
+    // An abort before this point fires no event, so it is checked here.
+    if (signal.aborted) {
+      response.destroy();
+      reject(new Error("aborted"));
+      return;
+    }
     const chunks: Buffer[] = [];
     let received = 0;
     const onAbort = () => {

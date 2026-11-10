@@ -11,6 +11,9 @@ const generateClientMock = vi.hoisted(() =>
 );
 vi.mock("@/lib/generation/generate", () => ({ generateClient: generateClientMock }));
 
+const busy = vi.hoisted(() => ({ value: false }));
+vi.mock("@/lib/generation/java-generator", () => ({ isGeneratorBusy: () => busy.value }));
+
 /** When set, preparing the generation throws this error instead of running. */
 const prepareCrash = vi.hoisted(() => ({ error: undefined as Error | undefined }));
 vi.mock("@/lib/generation/prepare", async (importOriginal) => {
@@ -95,6 +98,22 @@ describe("POST /api/generate", () => {
     expect(prepared?.filteredSpec.paths).toHaveProperty(["/todos/{todoId}", "get"]);
     expect(prepared?.filteredSpec.paths).not.toHaveProperty(["/todos/{todoId}", "$ref"]);
     expect(prepared?.filteredSpec.webhooks).toBeUndefined();
+  });
+
+  it("answers busy before reading the request while the generator is in use", async () => {
+    busy.value = true;
+    try {
+      const response = await POST(new Request("http://localhost/api/generate", { method: "POST", body: "not json" }));
+
+      expect(response.status).toBe(503);
+      expect(generateResponseSchema.parse(await response.json())).toEqual({
+        ok: false,
+        errors: [expect.objectContaining({ code: "generator-busy" })],
+      });
+      expect(generateClientMock).not.toHaveBeenCalled();
+    } finally {
+      busy.value = false;
+    }
   });
 
   it("rejects unknown operations before generating", async () => {

@@ -2,9 +2,10 @@ import { ARCHIVE_FILE_NAME } from "@/lib/archive/names";
 import { buildResultZip, checkArchivableAll } from "@/lib/archive/result-zip";
 import { renderChainedGuide } from "@/lib/guides/chained";
 import { MAX_ARCHIVE_REQUEST_BYTES, MAX_CONCURRENT_ARCHIVES } from "@/lib/validation/limits";
-import { problemsFromZod, type Problem } from "@/lib/validation/problems";
+import { failureResponse, internalErrorResponse } from "@/lib/validation/http";
+import { problemsFromZod } from "@/lib/validation/problems";
 import { readJsonBody } from "@/lib/validation/read-request";
-import { archiveRequestSchema, type FailureResponse } from "@/lib/validation/responses";
+import { archiveRequestSchema } from "@/lib/validation/responses";
 
 /** Process-wide resource counter (not request state): ZIP requests in progress. */
 let runningArchives = 0;
@@ -18,7 +19,7 @@ let runningArchives = 0;
  */
 export async function POST(request: Request): Promise<Response> {
   if (runningArchives >= MAX_CONCURRENT_ARCHIVES) {
-    return failure(503, [
+    return failureResponse(503, [
       { code: "archive-busy", message: "The server is busy creating other ZIP files. Try again in a moment." },
     ]);
   }
@@ -32,23 +33,21 @@ export async function POST(request: Request): Promise<Response> {
 
 async function archive(request: Request): Promise<Response> {
   const body = await readJsonBody(request, MAX_ARCHIVE_REQUEST_BYTES);
-  if (!body.ok) return failure(body.status, [body.problem]);
+  if (!body.ok) return failureResponse(body.status, [body.problem]);
 
   const input = archiveRequestSchema.safeParse(body.value);
-  if (!input.success) return failure(400, problemsFromZod(input.error));
+  if (!input.success) return failureResponse(400, problemsFromZod(input.error));
   const { results, project } = input.data;
 
   const rejection = checkArchivableAll(results);
-  if (rejection !== undefined) return failure(rejection.status, [rejection.problem]);
+  if (rejection !== undefined) return failureResponse(rejection.status, [rejection.problem]);
 
   let zip: Uint8Array;
   try {
     // Folder names come from the combination keys, never from the request.
     zip = await buildResultZip(renderChainedGuide(results, project));
   } catch (error) {
-    // Unexpected server problem: report its type only, never details or content.
-    console.error("Archiving crashed", { error: error instanceof Error ? error.name : typeof error });
-    return failure(500, [{ code: "internal", message: "The ZIP file could not be created. Try again." }]);
+    return internalErrorResponse("Archiving crashed", error, "The ZIP file could not be created. Try again.");
   }
 
   return new Response(zip.slice().buffer, {
@@ -58,9 +57,4 @@ async function archive(request: Request): Promise<Response> {
       "cache-control": "no-store",
     },
   });
-}
-
-function failure(status: number, errors: Problem[]): Response {
-  const response: FailureResponse = { ok: false, errors };
-  return Response.json(response, { status });
 }

@@ -52,4 +52,15 @@ describe("parseGraphqlSchema", () => {
   it("rejects empty input", () => {
     expect(parseGraphqlSchema("  \n")).toMatchObject({ ok: false, errors: [{ code: "empty" }] });
   });
+
+  it("reports invalid introspection JSON with its line and column", () => {
+    const result = parseGraphqlSchema('{\n  "__schema": {\n    "types": []\n  },\n}');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]).toMatchObject({
+      code: "not-json",
+      message: expect.stringMatching(/^The schema is not valid JSON: /) as string,
+      location: "line 5, column 1",
+    });
+  });
 });

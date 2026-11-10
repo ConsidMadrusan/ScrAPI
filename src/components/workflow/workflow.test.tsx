@@ -235,6 +235,18 @@ describe("specification stage", () => {
     expect(await screen.findByRole("heading", { name: "Select endpoints" })).toBeInTheDocument();
   });
 
+  it("explains an empty uploaded file instead of sending it", async () => {
+    const fetchMock = mockFetch();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await chooseMethod(user, /^Upload a file/);
+    await user.upload(await screen.findByLabelText("Choose a file"), new File([], "empty.json", { type: "application/json" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The file is empty.");
+    expect(requestsTo(fetchMock, "/api/validate")).toEqual([]);
+  });
+
   it("checks typed input only when Continue is pressed", async () => {
     const fetchMock = mockFetch();
     const user = userEvent.setup();
@@ -559,6 +571,8 @@ describe("generation and implementation stages", () => {
     await user.click(screen.getByRole("button", { name: /^Download ZIP/ }));
 
     expect(await screen.findByText("ZIP downloaded")).toBeInTheDocument();
+    // Revoked later, not right after the click, which can cancel the download in some browsers.
+    expect(vi.mocked(URL).revokeObjectURL).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /^Download ZIP/ })).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("ZIP downloaded.");
     const [archive] = requestsTo(fetchMock, "/api/archive") as ArchiveRequest[];

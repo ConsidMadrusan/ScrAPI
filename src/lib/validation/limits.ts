@@ -54,3 +54,30 @@ export const MAX_CONCURRENT_GRAPHQL_GENERATIONS = 2;
 
 /** Most server-side URL loads (the CORS fallback) running at once; further requests are rejected as busy. */
 export const MAX_CONCURRENT_URL_FETCHES = 4;
+
+/** Most OpenAPI specifications validated at once; further requests are rejected as busy. */
+export const MAX_CONCURRENT_VALIDATIONS = 4;
+
+/** Largest accepted /api/fetch-source request: a URL and a few headers. */
+export const MAX_FETCH_REQUEST_BYTES = 64 * 1024;
+
+/** How long loading a URL may take, in the browser and in the server-side fallback alike. */
+export const URL_LOAD_TIMEOUT_MS = 20_000;
+
+/** Most redirects the server-side URL fallback follows. */
+export const MAX_URL_REDIRECTS = 5;
+
+/** How long the browser waits for the server to build and send the ZIP. */
+export const ARCHIVE_REQUEST_TIMEOUT_MS = 120_000;
+
+/** Most problems reported at once; the rest are summarized in one extra line. */
+export const MAX_REPORTED_PROBLEMS = 20;
+
+/**
+ * Defaults for the OpenAPI Generator process. Each can be changed per
+ * deployment with an environment variable (see `src/lib/generation/runtime-config.ts`
+ * and README.md, "Self-hosting with Docker").
+ */
+export const DEFAULT_GENERATION_TIMEOUT_SECONDS = 60;
+export const DEFAULT_MAX_CONCURRENT_GENERATIONS = 1;
+export const DEFAULT_GENERATOR_MAX_HEAP_MB = 256;

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildSchema, print, validate } from "graphql";
 import { describe, expect, it } from "vitest";
-import { buildOperations } from "./build-operations";
+import { buildOperations, type OperationBuildError } from "./build-operations";
 import { listGraphqlOperations } from "./operations";
 
 const books = buildSchema(readFileSync(join(process.cwd(), "samples/specs/books.graphql"), "utf8"));
@@ -55,5 +55,49 @@ describe("buildOperations", () => {
 
   it("selects scalar root fields without a selection set", () => {
     expect(built("query health")).toBe("query Health {\n  health\n}");
+  });
+
+  it("aliases union members' fields whose types differ, so the operation stays valid", () => {
+    const schema = buildSchema(`
+      type Book { id: ID! title: String }
+      type Film { id: ID title: String }
+      union Media = Book | Film
+      type Query { media: [Media!]! }
+    `);
+
+    const document = buildOperations(schema, listGraphqlOperations(schema));
+
+    expect(validate(schema, document)).toEqual([]);
+    const text = print(document);
+    expect(text).toContain("... on Book {\n      idOnBook: id\n      title\n    }");
+    expect(text).toContain("... on Film {\n      idOnFilm: id\n      title\n    }");
+  });
+
+  it("selects an interface's own fields once and aliases conflicting implementation fields", () => {
+    const schema = buildSchema(`
+      interface Item { id: ID }
+      type Book implements Item { id: ID! code: Int }
+      type Film implements Item { id: ID code: String codeOnFilm: String }
+      type Query { item: Item }
+    `);
+
+    const document = buildOperations(schema, listGraphqlOperations(schema));
+
+    expect(validate(schema, document)).toEqual([]);
+    const text = print(document);
+    expect(text).toMatch(/item \{\s+__typename\s+id\s+\.\.\. on Book/);
+    expect(text).toContain("codeOnBook: code");
+    // The obvious alias is a real field of Film, so it gets another one.
+    expect(text).toContain("codeOnFilm_: code");
+    expect(text).toContain("codeOnFilm\n");
+  });
+
+  it("names the operation that could not be built", () => {
+    const schema = buildSchema("type Query { a: String }");
+    expect(() =>
+      buildOperations(schema, [
+        { id: "query missing", operationType: "query", field: "missing", name: "Missing", requiresInput: false },
+      ]),
+    ).toThrow(expect.objectContaining({ operationId: "query missing" }) as OperationBuildError);
   });
 });

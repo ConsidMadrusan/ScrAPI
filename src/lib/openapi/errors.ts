@@ -1,3 +1,5 @@
+import { MAX_REPORTED_PROBLEMS } from "@/lib/validation/limits";
+
 export type SpecErrorCode =
   | "empty"
   | "too-large"
@@ -22,7 +24,8 @@ export type SpecErrorCode =
   | "no-operations"
   | "not-introspection"
   | "invalid-schema"
-  | "validator-busy";
+  | "validator-busy"
+  | "more-problems";
 
 /** A problem with the submitted specification, safe to show to the user. */
 export interface SpecError {
@@ -42,6 +45,24 @@ export type SpecResult<T> =
  */
 export function specFailureStatus(errors: readonly { code: string }[]): 422 | 503 {
   return errors.some((error) => error.code === "validator-busy") ? 503 : 422;
+}
+
+/**
+ * At most MAX_REPORTED_PROBLEMS problems, plus one line that says how many
+ * more there are. `total` is the full count when the caller stopped
+ * collecting early; it defaults to the number of problems given.
+ */
+export function capProblems(problems: readonly SpecError[], total: number = problems.length): SpecError[] {
+  if (total <= MAX_REPORTED_PROBLEMS) return [...problems];
+  const shown = problems.slice(0, MAX_REPORTED_PROBLEMS);
+  const more = total - shown.length;
+  return [
+    ...shown,
+    {
+      code: "more-problems",
+      message: `…and ${String(more)} more ${more === 1 ? "problem" : "problems"}. Fix the ones above and check again.`,
+    },
+  ];
 }
 
 /** Formats JSON pointer segments for display, e.g. `paths › /users › get`. */

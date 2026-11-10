@@ -7,7 +7,7 @@ import { isEnumType, isScalarType, parse, print, printSchema, specifiedScalarTyp
 import { isSafeArchivePath } from "@/lib/archive/safe-path";
 import { resolveTarget, toDestinationPath, type TargetConfig } from "@/lib/targets/config";
 import { formatMegabytes, MAX_CONCURRENT_GRAPHQL_GENERATIONS, MAX_OUTPUT_BYTES, utf8ByteLength } from "@/lib/validation/limits";
-import type { Problem } from "@/lib/validation/problems";
+import { listSome, type Problem } from "@/lib/validation/problems";
 import type { GraphqlGenerateRequest } from "@/lib/validation/requests";
 import type { GeneratedFile, GraphqlGenerateSuccess } from "@/lib/validation/responses";
 import { buildOperations, OperationBuildError } from "./build-operations";
@@ -73,14 +73,28 @@ async function generate(request: GraphqlGenerateRequest): Promise<GraphqlGenerat
     document = buildOperations(schema, selection.selected);
   } catch (error) {
     if (!(error instanceof OperationBuildError)) throw error;
-    return failure(422, "operation-build-failed", `ScrAPI could not build the operations for this schema: ${error.message}`);
+    return failure(
+      422,
+      "operation-build-failed",
+      `ScrAPI could not build an operation for "${error.operationId}" (${error.message}). Deselect it and generate again, or write that operation by hand.`,
+    );
   }
 
   const target = resolveTarget(request.options);
-  const contents =
-    request.options.target === "csharp"
-      ? csharpFiles(schema, document, target)
-      : await typescriptFiles(schema, document);
+  let contents: Record<string, string>;
+  try {
+    contents =
+      request.options.target === "csharp" ? csharpFiles(schema, document, target) : await typescriptFiles(schema, document);
+  } catch (error) {
+    // GraphQL Code Generator rejected the schema or operations: a problem with the input, not the server.
+    // Logged by type only: its messages can quote the schema.
+    console.warn("GraphQL code generation failed", { error: error instanceof Error ? error.name : typeof error });
+    return failure(
+      422,
+      "generation-failed",
+      "GraphQL Code Generator could not generate a client for this schema and selection. Select fewer operations to find the one that causes the problem.",
+    );
+  }
 
   const files: GeneratedFile[] = Object.entries(contents).map(([relative, content]) => {
     const archivePath = `${target.archiveRoot}/${relative}`;
@@ -152,11 +166,6 @@ function customScalarNames(schema: GraphQLSchema): string[] {
   return Object.values(schema.getTypeMap())
     .filter((type) => isScalarType(type) && !isEnumType(type) && !builtIn.has(type.name) && !type.name.startsWith("__"))
     .map((type) => type.name);
-}
-
-function listSome(ids: readonly string[]): string {
-  const shown = ids.slice(0, 10).join(", ");
-  return ids.length > 10 ? `${shown}, and ${String(ids.length - 10)} more` : shown;
 }
 
 function failure(status: number, code: string, message: string): Extract<GraphqlGenerateResult, { ok: false }> {

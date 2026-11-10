@@ -48,7 +48,20 @@ export function graphqlConfigFile(namespace: string): string {
   )}\n`;
 }
 
-/** The client directives StrawberryShake expects next to the schema (as `dotnet graphql init` writes them). */
+/**
+ * The client directives StrawberryShake expects next to the schema (as `dotnet graphql init` writes them).
+ *
+ * - `@key` and `extend schema @key(fields: "id")`: StrawberryShake keeps results
+ *   in a normalized entity store. Types with an `id` field become entities
+ *   identified by it, so the same object returned by two operations is stored
+ *   once. Types without `id` are stored as plain data; nothing fails.
+ * - `@serializationType` / `@runtimeType`: map custom scalars to .NET types
+ *   (unmapped custom scalars become `string`).
+ * - `@enumValue` / `@rename`: rename generated enum values and input members.
+ *
+ * ScrAPI uses none of them beyond the default `@key`; they are declared so
+ * that users can add them in `schema.extensions.graphql` without errors.
+ */
 export const SCHEMA_EXTENSIONS = `scalar _KeyFieldSet
 
 directive @key(fields: _KeyFieldSet!) on SCHEMA | OBJECT

@@ -19,6 +19,7 @@ export async function readJsonBody(
     },
   };
 
+  // A missing header gives Number(null) === 0, which passes; the streamed read below still enforces the limit.
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) return tooLarge;
 

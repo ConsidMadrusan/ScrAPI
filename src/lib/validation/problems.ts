@@ -10,3 +10,9 @@ export function problemsFromZod(error: z.ZodError): Problem[] {
     return problem;
   });
 }
+
+/** `a, b, c`, or the first ten followed by `, and N more`, for messages that list names. */
+export function listSome(items: readonly string[], max = 10): string {
+  const shown = items.slice(0, max).join(", ");
+  return items.length > max ? `${shown}, and ${String(items.length - max)} more` : shown;
+}

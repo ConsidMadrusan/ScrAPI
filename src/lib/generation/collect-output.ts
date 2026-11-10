@@ -93,9 +93,18 @@ export async function exceedsRawOutputLimits(root: string): Promise<boolean> {
   return false;
 }
 
-/** Regular files below `root`, as relative `/`-separated paths. */
+/**
+ * Regular files below `root`, as relative `/`-separated paths. A missing
+ * `root` (the generator exited without writing anything) has no files.
+ */
 async function listFiles(root: string, relative = ""): Promise<string[]> {
-  const entries = await readdir(join(root, relative), { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(join(root, relative), { withFileTypes: true });
+  } catch (error) {
+    if (relative === "" && error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  }
   const files: string[] = [];
   for (const entry of entries) {
     const path = relative === "" ? entry.name : `${relative}/${entry.name}`;

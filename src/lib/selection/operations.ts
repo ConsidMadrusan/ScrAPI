@@ -141,7 +141,8 @@ function requiresInput(document: JsonObject, pathItem: JsonObject, operation: Js
   return requiredParameter || (isJsonObject(body) && body.required === true);
 }
 
+/** The tag names, once each; blank names count as no tag (the operation goes to "Other"). */
 function uniqueStrings(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item): item is string => typeof item === "string"))];
+  return [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim() !== ""))];
 }

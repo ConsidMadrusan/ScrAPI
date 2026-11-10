@@ -2,10 +2,11 @@ import { isIntrospectionType, isSpecifiedScalarType, printSchema } from "graphql
 import { groupGraphqlOperations, listGraphqlOperations, subscriptionCount } from "@/lib/graphql/operations";
 import { parseGraphqlSchema } from "@/lib/graphql/parse";
 import { MAX_REQUEST_BYTES } from "@/lib/validation/limits";
-import { problemsFromZod, type Problem } from "@/lib/validation/problems";
+import { failureResponse, internalErrorResponse } from "@/lib/validation/http";
+import { problemsFromZod } from "@/lib/validation/problems";
 import { readJsonBody } from "@/lib/validation/read-request";
 import { graphqlValidateRequestSchema } from "@/lib/validation/requests";
-import type { FailureResponse, GraphqlValidateSuccess } from "@/lib/validation/responses";
+import type { GraphqlValidateSuccess } from "@/lib/validation/responses";
 
 /**
  * Validates a GraphQL schema (SDL or introspection JSON) and lists the root
@@ -14,19 +15,19 @@ import type { FailureResponse, GraphqlValidateSuccess } from "@/lib/validation/r
  */
 export async function POST(request: Request): Promise<Response> {
   const body = await readJsonBody(request, MAX_REQUEST_BYTES);
-  if (!body.ok) return failure(body.status, [body.problem]);
+  if (!body.ok) return failureResponse(body.status, [body.problem]);
 
   const input = graphqlValidateRequestSchema.safeParse(body.value);
-  if (!input.success) return failure(400, problemsFromZod(input.error));
+  if (!input.success) return failureResponse(400, problemsFromZod(input.error));
 
   try {
     const parsed = parseGraphqlSchema(input.data.schema);
-    if (!parsed.ok) return failure(422, parsed.errors);
+    if (!parsed.ok) return failureResponse(422, parsed.errors);
     const schema = parsed.value;
 
     const operations = listGraphqlOperations(schema);
     if (operations.length === 0) {
-      return failure(422, [
+      return failureResponse(422, [
         { code: "no-operations", message: "The schema has no Query or Mutation fields to generate." },
       ]);
     }
@@ -47,13 +48,6 @@ export async function POST(request: Request): Promise<Response> {
     };
     return Response.json(response);
   } catch (error) {
-    // Unexpected server problem: report its type only, never details or content.
-    console.error("GraphQL validation crashed", { error: error instanceof Error ? error.name : typeof error });
-    return failure(500, [{ code: "internal", message: "Something went wrong while validating. Try again." }]);
+    return internalErrorResponse("GraphQL validation crashed", error, "Something went wrong while validating. Try again.");
   }
-}
-
-function failure(status: number, errors: Problem[]): Response {
-  const response: FailureResponse = { ok: false, errors };
-  return Response.json(response, { status });
 }

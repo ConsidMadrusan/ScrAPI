@@ -57,6 +57,15 @@ describe("listOperations", () => {
     };
     expect(listOperations(spec)[0]?.tags).toEqual(["a", "b"]);
   });
+
+  it("treats blank tags as no tag, so the operation is listed under Other", () => {
+    const spec: JsonObject = {
+      paths: { "/x": { get: { tags: ["", "  "], responses: {} } }, "/y": { get: { tags: ["", "b"], responses: {} } } },
+    };
+    const listed = listOperations(spec);
+    expect(listed.map((operation) => operation.tags)).toEqual([[], ["b"]]);
+    expect(groupByTag(spec, listed).map((group) => group.name)).toEqual(["b", "Other"]);
+  });
 });
 
 describe("groupByTag", () => {

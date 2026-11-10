@@ -40,9 +40,9 @@ export function ImplementScreen() {
     <section className="flex flex-col gap-6">
       <StageHeader stage={3} title="Implement" />
       <p>
-        Generated {fileCount} files for {results.length}{" "}
-        {results.length === 1 ? "framework combination" : "framework combinations"} from {operationCount} selected
-        operations. How do you want to add them to your project?
+        Generated {fileCount} {fileCount === 1 ? "file" : "files"} for {results.length}{" "}
+        {results.length === 1 ? "framework combination" : "framework combinations"} from {operationCount} selected{" "}
+        {operationCount === 1 ? "operation" : "operations"}. How do you want to add them to your project?
       </p>
 
       {runs.map((run) => {

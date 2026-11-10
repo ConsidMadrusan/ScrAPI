@@ -7,22 +7,20 @@ import { z } from "zod";
 import { GLOBAL_PROPERTIES, type GeneratorSettings } from "@/lib/targets/config";
 import generatorConfig from "../../../openapitools.json";
 import { exceedsRawOutputLimits } from "./collect-output";
-
-/** Generation normally takes about a second; this allows for large specifications. */
-export const GENERATION_TIMEOUT_MS = 60_000;
+import { generatorRuntimeConfig } from "./runtime-config";
 
 /** How often the output folder is measured while the generator runs. */
 export const OUTPUT_CHECK_INTERVAL_MS = 250;
 
 /**
- * Most generator JVMs that may run at once; further requests are rejected as busy.
- * Together with JVM_MAX_HEAP this keeps the server within the 512 MB container
- * memory documented in README.md.
+ * How much of the generator's error output is kept in memory to explain a
+ * failure. Its validation errors come first, before the stack trace.
  */
-export const MAX_CONCURRENT_GENERATIONS = 1;
+const MAX_ERROR_OUTPUT_BYTES = 16 * 1024;
 
-/** Fixed heap cap per generator JVM, so a large run fails cleanly instead of exhausting container memory. */
-export const JVM_MAX_HEAP = "-Xmx256m";
+/** Most generator error lines shown to the user, and the longest line kept. */
+const MAX_ERROR_DETAILS = 10;
+const MAX_ERROR_DETAIL_LENGTH = 300;
 
 /** Process-wide resource counter (not request state): JVMs currently running. */
 let runningGenerators = 0;
@@ -54,6 +52,7 @@ export interface GeneratorRun {
   settings: GeneratorSettings;
   specPath: string;
   outputDir: string;
+  /** Overrides the configured timeout (tests). */
   timeoutMs?: number;
   /** Aborts (and kills) the generator, e.g. when the client disconnects. */
   signal?: AbortSignal | undefined;
@@ -61,7 +60,8 @@ export interface GeneratorRun {
 
 export type GeneratorOutcome =
   | { status: "ok" }
-  | { status: "failed"; exitCode: number | null }
+  /** `details`: the generator's own validation errors, when it printed any. */
+  | { status: "failed"; exitCode: number | null; details: readonly string[] }
   | { status: "timeout" }
   | { status: "output-too-large" }
   | { status: "aborted" }
@@ -69,12 +69,17 @@ export type GeneratorOutcome =
   | { status: "unavailable"; reason: "invalid-config" | "missing-jar" | "missing-java" | "spawn-failed"; code?: string };
 
 /** Fixed argument list: settings come from target configuration, never from user input. */
-export function generatorArguments(run: GeneratorRun, jarPath: string): string[] {
+export function generatorArguments(
+  run: GeneratorRun,
+  jarPath: string,
+  maxHeapMb: number = generatorRuntimeConfig().maxHeapMb,
+): string[] {
   const properties = Object.entries(run.settings.additionalProperties)
     .map(([key, value]) => `${key}=${value}`)
     .join(",");
   const args = [
-    JVM_MAX_HEAP,
+    // Heap cap per JVM, so a large run fails cleanly instead of exhausting container memory.
+    `-Xmx${String(maxHeapMb)}m`,
     "-XX:-UsePerfData",
     "-jar",
     jarPath,
@@ -97,15 +102,20 @@ export function generatorArguments(run: GeneratorRun, jarPath: string): string[]
   return args;
 }
 
+/** Whether a new generation would be rejected as busy right now (checked again when it starts). */
+export function isGeneratorBusy(): boolean {
+  return runningGenerators >= generatorRuntimeConfig().maxConcurrent;
+}
+
 /**
- * Runs OpenAPI Generator as a child process without a shell. Its output is
- * discarded rather than logged, because it can echo specification content.
- * At most MAX_CONCURRENT_GENERATIONS run at once; the child is killed on
- * timeout, when its output folder passes the raw output limits, or when
- * `run.signal` aborts.
+ * Runs OpenAPI Generator as a child process without a shell. Its standard
+ * output is discarded and its error output is only read into memory, never
+ * logged, because both can echo specification content. At most the
+ * configured number run at once; the child is killed on timeout, when its
+ * output folder passes the raw output limits, or when `run.signal` aborts.
  */
 export async function runGenerator(run: GeneratorRun): Promise<GeneratorOutcome> {
-  if (runningGenerators >= MAX_CONCURRENT_GENERATIONS) return { status: "busy" };
+  if (isGeneratorBusy()) return { status: "busy" };
   runningGenerators += 1;
   try {
     return await startGenerator(run);
@@ -124,13 +134,22 @@ async function startGenerator(run: GeneratorRun): Promise<GeneratorOutcome> {
   }
   if (run.signal?.aborted === true) return { status: "aborted" };
 
-  const timeoutMs = run.timeoutMs ?? GENERATION_TIMEOUT_MS;
+  const config = generatorRuntimeConfig();
+  const timeoutMs = run.timeoutMs ?? config.timeoutMs;
   const signal = run.signal;
   return new Promise<GeneratorOutcome>((resolve) => {
-    const child = spawn("java", generatorArguments(run, jarPath), {
+    const child = spawn(config.javaCommand, generatorArguments(run, jarPath, config.maxHeapMb), {
       shell: false,
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
+    });
+
+    // The first part of the error output, in memory only: it holds the validation errors.
+    let errorOutput = "";
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      if (errorOutput.length < MAX_ERROR_OUTPUT_BYTES) {
+        errorOutput = (errorOutput + chunk.toString()).slice(0, MAX_ERROR_OUTPUT_BYTES);
+      }
     });
 
     type StopReason = "timeout" | "output-too-large" | "aborted";
@@ -188,7 +207,38 @@ async function startGenerator(run: GeneratorRun): Promise<GeneratorOutcome> {
       cleanUp();
       if (stopReason !== undefined) resolve({ status: stopReason });
       else if (exitCode === 0) resolve({ status: "ok" });
-      else resolve({ status: "failed", exitCode });
+      else resolve({ status: "failed", exitCode, details: generatorErrorDetails(errorOutput) });
     });
   });
+}
+
+/**
+ * The generator's own validation errors from its error output, verified with
+ * OpenAPI Generator 7.26.0:
+ *
+ * ```
+ * Exception in thread "main" org.openapitools.codegen.SpecValidationException: There were issues …
+ *  | Error count: 1, Warning count: 0
+ * Errors:
+ * \t-attribute paths.'/x'(get).responses is missing
+ *
+ * \tat org.openapitools.codegen…
+ * ```
+ *
+ * Only the `-` lines of the `Errors:` block are returned: never the stack
+ * trace or file paths. Empty when the output has no such block.
+ */
+export function generatorErrorDetails(output: string): string[] {
+  const lines = output.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === "Errors:");
+  if (start === -1) return [];
+  const details: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const item = /^\s*-\s*(.+)$/.exec(line)?.[1];
+    if (item === undefined) break;
+    if (details.length < MAX_ERROR_DETAILS) {
+      details.push(item.trim().replace(/(?:\/[^\s'"]+)*\/scrapi-[^\s'"]*/g, "<temp>").slice(0, MAX_ERROR_DETAIL_LENGTH));
+    }
+  }
+  return details;
 }

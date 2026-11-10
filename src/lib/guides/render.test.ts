@@ -6,7 +6,7 @@ import { renderChainedGuide } from "./chained";
 import { renderGuideMarkdown } from "./markdown";
 import { renderGuide } from "./render";
 import type { Guide, GuideBlock } from "./types";
-import { camelCase, findUsageExample, pascalCase } from "./usage";
+import { camelCase, findUsageExample, generatedOperationId, pascalCase } from "./usage";
 
 function blocks(guide: Guide): GuideBlock[] {
   return guide.steps.flatMap((step) => step.blocks);
@@ -130,6 +130,24 @@ describe("renderGuide", () => {
     expect(JSON.stringify(guide)).toContain("could not match a selected operation");
   });
 
+  it("finds the method the generator named after the path when an operation has no operationId", () => {
+    const withoutIds = TODO_OPERATIONS.map((operation) => {
+      const copy = { ...operation };
+      delete copy.operationId;
+      return copy;
+    });
+    const result = generationResult({ target: "typescript-next", httpClient: "axios" }, withoutIds);
+    const files = result.files.map((file) =>
+      file.content.includes("class TodosApi")
+        ? { ...file, content: "export class TodosApi extends BaseAPI {\n    public todosGet(status?: TodoStatus, options?: RawAxiosRequestConfig) {\n}" }
+        : file,
+    );
+
+    const usage = findUsageExample({ ...result, files });
+
+    expect(usage).toMatchObject({ typeName: "TodosApi", methodName: "todosGet", callableWithoutArguments: true });
+  });
+
   it("skips operations whose generated method is not in the files", () => {
     const renamed = TODO_OPERATIONS.map((operation) =>
       operation.id === "GET /todos" ? { ...operation, operationId: "somethingElse" } : operation,
@@ -141,6 +159,17 @@ describe("renderGuide", () => {
   it("is deterministic", () => {
     const result = generationResult({ target: "csharp" });
     expect(renderGuide(result)).toEqual(renderGuide(structuredClone(result)));
+  });
+});
+
+describe("generatedOperationId", () => {
+  // Names verified against OpenAPI Generator 7.26.0 output for every target.
+  it.each([
+    ["get", "/users/{user-id}/todo_items", "usersUserIdTodoItemsGet"],
+    ["get", "/", "rootGet"],
+    ["post", "/v1.2/status", "v12StatusPost"],
+  ] as const)("%s %s → %s", (method, path, expected) => {
+    expect(generatedOperationId({ method, path })).toBe(expected);
   });
 });
 

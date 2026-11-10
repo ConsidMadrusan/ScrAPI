@@ -1,8 +1,20 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type * as CodegenCore from "@graphql-codegen/core";
 import type { GraphqlGenerateRequest } from "@/lib/validation/requests";
 import { generateGraphqlClient } from "./generate";
+
+/** When set, GraphQL Code Generator throws this error instead of running. */
+const codegenCrash = vi.hoisted(() => ({ error: undefined as Error | undefined }));
+vi.mock("@graphql-codegen/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof CodegenCore>();
+  return {
+    ...actual,
+    codegen: (...args: Parameters<typeof actual.codegen>) =>
+      codegenCrash.error ? Promise.reject(codegenCrash.error) : actual.codegen(...args),
+  };
+});
 
 const schema = readFileSync(join(process.cwd(), "samples/specs/books.graphql"), "utf8");
 
@@ -75,5 +87,30 @@ describe("generateGraphqlClient", () => {
       selection,
     });
     expect(result).toMatchObject({ ok: false, status: 422, errors: [{ code: "invalid-schema" }] });
+  });
+
+  it("reports a GraphQL Code Generator failure as a problem with the input, without its details", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    codegenCrash.error = new Error("type Secret { quoted: String }");
+    try {
+      const result = await generateGraphqlClient({ schema, options: { target: "typescript-angular" }, selection });
+
+      expect(result).toEqual({ ok: false, status: 422, errors: [expect.objectContaining({ code: "generation-failed" })] });
+      expect(JSON.stringify(result)).not.toContain("Secret");
+      expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain("Secret");
+    } finally {
+      codegenCrash.error = undefined;
+    }
+  });
+
+  it("generates a client for a union whose members declare a field with different types", async () => {
+    const media = "type Book { id: ID! } type Film { id: ID } union Media = Book | Film type Query { media: [Media!]! }";
+    const result = await generateGraphqlClient({
+      schema: media,
+      options: { target: "typescript-next", httpClient: "fetch" },
+      selection: [{ operationType: "query", field: "media" }],
+    });
+
+    expect(file(result, "api-client/operations.graphql")).toContain("idOnBook: id");
   });
 });

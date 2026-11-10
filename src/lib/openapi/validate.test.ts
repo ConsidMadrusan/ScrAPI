@@ -160,7 +160,8 @@ describe("validateSpecification", () => {
         {
           code: "duplicate-operation-id",
           message:
-            'The operationId "getItem" is used by more than one operation (GET /authors/{authorId}, GET /reviews/{reviewId}). OpenAPI requires operationIds to be unique.',
+            'The operationId "getItem" is used by more than one operation (GET /authors/{authorId}, GET /reviews/{reviewId}). OpenAPI requires operationIds to be unique: rename all but one.',
+          location: "paths › /reviews/{reviewId} › get › operationId",
         },
       ],
     });
@@ -222,4 +223,42 @@ describe("validateSpecification", () => {
 
     expect((await validateSpecification(todo)).ok).toBe(true);
   });
+});
+
+describe("schema error reporting", () => {
+  /** A response without a description but with an unknown field, and a parameter with an unknown field. */
+  function invalidSpec(version: string): string {
+    return JSON.stringify({
+      openapi: version,
+      info: { title: "T", version: "1" },
+      paths: {
+        "/x": {
+          get: {
+            parameters: [{ name: "a", in: "query", schema: { type: "string" }, bogus: 1 }],
+            responses: { "200": { foo: 1 } },
+          },
+        },
+      },
+    });
+  }
+
+  it.each(["3.0.3", "3.1.0"])(
+    "reports the real problems in OpenAPI %s, not the Reference alternatives Ajv also tried",
+    async (version) => {
+      const result = await validateSpecification(invalidSpec(version));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const messages = result.errors.map((error) => `${error.location ?? ""}: ${error.message}`);
+      expect(messages).toEqual(
+        expect.arrayContaining([
+          "paths › /x › get › responses › 200: Must have required property 'description'.",
+          expect.stringMatching(/^paths › \/x › get › responses › 200: Must NOT have (additional|unevaluated) properties: "foo"\.$/),
+          expect.stringMatching(/^paths › \/x › get › parameters › 0: Must NOT have (additional|unevaluated) properties: "bogus"\.$/),
+        ]),
+      );
+      expect(messages.join("\n")).not.toMatch(/\$ref|oneOf|"else"/);
+      expect(result.errors).toHaveLength(3);
+    },
+  );
 });

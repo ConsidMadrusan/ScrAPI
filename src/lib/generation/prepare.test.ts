@@ -41,7 +41,8 @@ describe("prepareGeneration", () => {
       errors: [
         {
           code: "unknown-operations",
-          message: "These operations are not in the specification: PATCH /todos.",
+          message:
+            "These operations are not in the specification: PATCH /todos. The specification may have changed since you selected them. Go back and select the operations again.",
         },
       ],
     });

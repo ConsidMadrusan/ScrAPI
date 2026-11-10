@@ -32,6 +32,18 @@ export function checkArchivable(result: GenerateSuccess): ArchiveRejection | und
     };
   }
 
+  // Two files at one path would silently replace each other in the ZIP.
+  const paths = result.files.map((file) => file.archivePath);
+  if (new Set(paths).size !== paths.length) {
+    return {
+      status: 422,
+      problem: {
+        code: "duplicate-archive-path",
+        message: "The result contains the same file path more than once. Generate the client again.",
+      },
+    };
+  }
+
   const target = resolveTarget(result.options);
   const matchesTarget =
     result.archiveRoot === target.archiveRoot &&

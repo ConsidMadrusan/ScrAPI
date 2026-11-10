@@ -5,6 +5,7 @@ import {
   utf8ByteLength,
 } from "@/lib/validation/limits";
 import {
+  capProblems,
   formatLocation,
   type SpecError,
   type SpecResult,
@@ -35,7 +36,6 @@ export function openApiVersion(document: JsonObject): OpenApiVersion {
  */
 const UNSUPPORTED_31_KEYWORDS = ["$id", "$anchor", "$dynamicRef", "$dynamicAnchor"] as const;
 const YAML_START = /^(---|%YAML|#|[A-Za-z_][\w.-]*\s*:)/;
-const MAX_REFERENCE_ERRORS = 20;
 
 /**
  * Checks everything that does not need the full OpenAPI validator: size, JSON
@@ -73,7 +73,7 @@ export function parseSpecification(text: string): SpecResult<JsonObject> {
   if (!isJsonObject(document)) {
     return fail({
       code: "not-object",
-      message: "The specification must be a JSON object with an \"openapi\" field.",
+      message: "The specification must be an object with an \"openapi\" field, not a single value or a list.",
     });
   }
 
@@ -88,11 +88,11 @@ export function parseSpecification(text: string): SpecResult<JsonObject> {
   if (versionError) return fail(versionError);
 
   const referenceErrors = checkReferences(document);
-  if (referenceErrors.length > 0) return { ok: false, errors: referenceErrors };
+  if (referenceErrors.length > 0) return { ok: false, errors: capProblems(referenceErrors) };
 
   if (openApiVersion(document) === "3.1") {
     const keywordErrors = checkUnsupportedKeywords(document);
-    if (keywordErrors.length > 0) return { ok: false, errors: keywordErrors };
+    if (keywordErrors.length > 0) return { ok: false, errors: capProblems(keywordErrors) };
   }
 
   return { ok: true, value: document };
@@ -102,11 +102,15 @@ function fail(error: SpecError): SpecResult<never> {
   return { ok: false, errors: [error] };
 }
 
-function jsonSyntaxError(error: unknown, content: string): SpecError {
+/**
+ * A JSON syntax error with a short reason and its line and column. `subject`
+ * names the input in the message, e.g. "specification" or "schema".
+ */
+export function jsonSyntaxError(error: unknown, content: string, subject = "specification"): SpecError {
   const message = error instanceof Error ? error.message : "";
   const result: SpecError = {
     code: "not-json",
-    message: `The specification is not valid JSON: ${describeJsonError(message)}.`,
+    message: `The ${subject} is not valid JSON: ${describeJsonError(message)}.`,
   };
   const location = jsonErrorLocation(message, content);
   if (location) result.location = location;
@@ -167,8 +171,8 @@ function checkVersion(document: JsonObject): SpecError | undefined {
     return {
       code: "json-schema",
       message: isOpenApiMetaSchema(document)
-        ? "This is a JSON Schema that defines the OpenAPI format itself, not a description of an API. ScrAPI already checks every specification against the official schema for its version. Paste your API's OpenAPI document instead: the JSON file with \"openapi\", \"info\", and \"paths\", usually served by the API (for example at /swagger/v1/swagger.json or /openapi.json)."
-        : `This is a JSON Schema, not an OpenAPI specification. Paste your API's OpenAPI document (${SUPPORTED_DESCRIPTION}): the JSON file with "openapi", "info", and "paths".`,
+        ? "This is a JSON Schema that defines the OpenAPI format itself, not a description of an API. ScrAPI already checks every specification against the official schema for its version. Paste your API's OpenAPI document instead: the JSON or YAML document with \"openapi\", \"info\", and \"paths\", usually served by the API (for example at /swagger/v1/swagger.json or /openapi.json)."
+        : `This is a JSON Schema, not an OpenAPI specification. Paste your API's OpenAPI document (${SUPPORTED_DESCRIPTION}): the JSON or YAML document with "openapi", "info", and "paths".`,
     };
   }
   if (version === undefined) {
@@ -178,13 +182,16 @@ function checkVersion(document: JsonObject): SpecError | undefined {
       code: "missing-version",
       message: looksLikeOpenApi
         ? `The specification has no "openapi" field. Add the version it was written for at the top level, for example "openapi": "3.0.3" or "openapi": "3.1.0". ScrAPI supports ${SUPPORTED_DESCRIPTION}.`
-        : `This is not an OpenAPI specification: it has no "openapi" field. ScrAPI supports ${SUPPORTED_DESCRIPTION} documents in JSON.`,
+        : `This is not an OpenAPI specification: it has no "openapi" field. ScrAPI supports ${SUPPORTED_DESCRIPTION} documents (JSON or YAML), Swagger 2.0, and GraphQL schemas.`,
     };
   }
   if (typeof version !== "string") {
+    // YAML reads an unquoted `openapi: 3.1` as a number.
+    const example = typeof version === "number" ? (Number.isInteger(version) ? `${String(version)}.0.0` : `${String(version)}.0`) : "";
+    const yamlHint = example === "" ? "" : ` In YAML, put the version in quotes, for example openapi: "${example}".`;
     return {
       code: "invalid-version",
-      message: `The "openapi" field must be a string such as "3.0.3", not ${describeType(version)}.`,
+      message: `The "openapi" field must be a string such as "3.0.3", not ${describeType(version)}.${yamlHint}`,
       location: "openapi",
     };
   }
@@ -223,7 +230,7 @@ function checkUnsupportedKeywords(document: JsonObject): SpecError[] {
   const errors: SpecError[] = [];
   forEachObject(document, (node, segments) => {
     for (const keyword of UNSUPPORTED_31_KEYWORDS) {
-      if (errors.length >= MAX_REFERENCE_ERRORS || typeof node[keyword] !== "string") continue;
+      if (typeof node[keyword] !== "string") continue;
       errors.push({
         code: "unsupported-keyword",
         message: `The "${keyword}" keyword is not supported yet. Refer to schemas with "$ref": "#/components/schemas/..." instead.`,
@@ -239,7 +246,6 @@ function checkReferences(document: JsonObject): SpecError[] {
   const errors: SpecError[] = [];
 
   const visit = (value: JsonValue, segments: string[]) => {
-    if (errors.length >= MAX_REFERENCE_ERRORS) return;
     if (Array.isArray(value)) {
       value.forEach((child, index) => {
         visit(child, [...segments, String(index)]);

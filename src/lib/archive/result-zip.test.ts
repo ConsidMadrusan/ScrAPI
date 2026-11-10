@@ -41,6 +41,16 @@ describe("checkArchivable", () => {
     expect(checkArchivable(generationResult(options))).toBeUndefined();
   });
 
+  it("rejects a result with the same file path twice, which would overwrite a file in the ZIP", () => {
+    const result = generationResult({ target: "csharp" });
+    const [first] = result.files;
+    if (first === undefined) throw new Error("fixture has no files");
+
+    expect(checkArchivable({ ...result, files: [...result.files, { ...first, content: "other" }] })?.problem.code).toBe(
+      "duplicate-archive-path",
+    );
+  });
+
   it("rejects a result whose roots belong to another target", () => {
     const result = { ...generationResult({ target: "csharp" }), options: { target: "typescript-angular" as const } };
 

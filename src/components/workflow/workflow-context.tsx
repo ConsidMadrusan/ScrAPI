@@ -78,6 +78,9 @@ const NETWORK_ERROR: Problem[] = [
   { code: "network", message: "The server could not be reached. Check your connection and try again." },
 ];
 
+/** How long the ZIP's object URL stays valid after the download starts. */
+const OBJECT_URL_LIFETIME_MS = 60_000;
+
 const WorkflowContext = createContext<WorkflowState | null>(null);
 
 export function useWorkflow(): WorkflowState {
@@ -149,6 +152,11 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
   const validate = useCallback(
     async (text: string, kind: SourceKind = detectSourceKind(text)): Promise<boolean> => {
       clearRuns();
+      // A newer check replaces any check still in progress, also when it fails
+      // locally: an older answer arriving later must not overwrite it.
+      pendingValidation.current?.abort();
+      pendingValidation.current = null;
+
       // Quick local checks first; the server's validation is authoritative.
       // YAML and Swagger 2.0 are converted on the server, and GraphQL schemas
       // are only checked there, so they go there directly.
@@ -160,7 +168,6 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      pendingValidation.current?.abort();
       const controller = new AbortController();
       pendingValidation.current = controller;
       setValidation({ status: "validating" });
@@ -211,7 +218,15 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
     [clearRuns],
   );
 
-  /** Generates the given combinations one at a time; the server runs one generator at once. */
+  /**
+   * Generates the given combinations one at a time; the server runs one generator at once.
+   *
+   * `pendingGeneration` is the lock between `runSequence`, `retry`, and
+   * `clearRuns`: it holds the controller of the sequence in progress and is
+   * null exactly when none runs. `retry` is refused while it is set;
+   * `clearRuns` aborts it, and an aborted sequence stops after its current
+   * request without updating the runs.
+   */
   const runSequence = useCallback(
     (targets: readonly GenerationOptions[]) => {
       if (validation.status !== "valid") return;
@@ -309,7 +324,10 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       link.href = url;
       link.download = ARCHIVE_FILE_NAME;
       link.click();
-      URL.revokeObjectURL(url);
+      // Revoking right after click() can cancel the download in some browsers.
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+      }, OBJECT_URL_LIFETIME_MS);
       setDownload("downloaded");
     } catch {
       setDownload("failed", NETWORK_ERROR);

@@ -438,7 +438,7 @@ function noUsageStep(): GuideStep {
     blocks: [
       {
         kind: "text",
-        text: "ScrAPI could not match a selected operation to a generated method (for example because the operations have no operationId), so no example is shown. The generated API classes in the copied folder contain one method per selected operation.",
+        text: "ScrAPI could not match a selected operation to a generated method, so no example is shown. The generated API classes in the copied folder contain one method per selected operation.",
       },
     ],
   };

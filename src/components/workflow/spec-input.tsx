@@ -44,7 +44,7 @@ const METHODS: readonly { method: InputMethod; title: string; description: strin
   {
     method: "upload",
     title: "Upload a file",
-    description: `A .json, .yaml, .yml, .graphql, or .gql file, up to ${formatMegabytes(MAX_SPEC_BYTES)}.`,
+    description: `A .json, .yaml, .yml, .graphql, .graphqls, or .gql file, up to ${formatMegabytes(MAX_SPEC_BYTES)}.`,
     icon: FileUp,
   },
   {
@@ -252,7 +252,11 @@ function UploadForm({ onChange, onSubmit }: Pick<SpecInputProps, "onChange" | "o
     if (!file) return;
 
     if (!/\.(json|ya?ml|graphqls?|gql)$/i.test(file.name)) {
-      setError("Choose a .json, .yaml, .yml, .graphql, or .gql file.");
+      setError("Choose a .json, .yaml, .yml, .graphql, .graphqls, or .gql file.");
+      return;
+    }
+    if (file.size === 0) {
+      setError("The file is empty. Choose the file that contains the API description.");
       return;
     }
     if (file.size > MAX_SPEC_BYTES) {
@@ -339,6 +343,9 @@ function UrlForm({ onChange, onSubmit, isValidating }: Pick<SpecInputProps, "onC
       }
       onChange(result.text);
       onSubmit(result.text, result.kind);
+    } catch {
+      // Loading reports its known problems as results; this is anything unexpected.
+      if (!controller.signal.aborted) setError("The URL could not be loaded. Try again, or download the file and upload it.");
     } finally {
       if (pending.current === controller) {
         pending.current = null;

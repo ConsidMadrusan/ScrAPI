@@ -7,16 +7,14 @@ import {
   listOperations,
   type OperationSummary,
 } from "@/lib/selection/operations";
-import { formatLocation, pointerSegments, type SpecError, type SpecResult } from "./errors";
+import { MAX_CONCURRENT_VALIDATIONS } from "@/lib/validation/limits";
+import { capProblems, formatLocation, pointerSegments, type SpecError, type SpecResult } from "./errors";
 import { isJsonObject, type JsonObject, type JsonValue } from "./json";
 import { openApiVersion, parseSpecification, type OpenApiVersion } from "./parse";
 import { normalizeSpecification, type Conversion } from "./normalize";
 import { checkAgainstOfficialSchema } from "./schema-check";
 
-const MAX_VALIDATION_ERRORS = 20;
-
-/** Most specifications that may be validated at once; further requests are rejected as busy. */
-export const MAX_CONCURRENT_VALIDATIONS = 4;
+export { MAX_CONCURRENT_VALIDATIONS };
 
 let runningValidations = 0;
 
@@ -35,6 +33,7 @@ type ParserDocument = Exclude<Parameters<typeof SwaggerParser.validate>[0], stri
 /** Shape of the schema errors swagger-parser attaches as `details`. */
 interface SchemaErrorDetail {
   instancePath?: unknown;
+  keyword?: unknown;
   message?: unknown;
   params?: unknown;
 }
@@ -102,12 +101,16 @@ async function validate(input: string): Promise<SpecResult<ValidatedSpec>> {
   if (duplicates.size > 0) {
     return {
       ok: false,
-      errors: [...duplicates].map(([operationId, users]) => ({
-        code: "duplicate-operation-id",
-        message: `The operationId "${operationId}" is used by more than one operation (${users
-          .map((operation) => operation.id)
-          .join(", ")}). OpenAPI requires operationIds to be unique.`,
-      })),
+      errors: capProblems(
+        [...duplicates].map(([operationId, users]) => ({
+          code: "duplicate-operation-id",
+          message: `The operationId "${operationId}" is used by more than one operation (${users
+            .map((operation) => operation.id)
+            .join(", ")}). OpenAPI requires operationIds to be unique: rename all but one.`,
+          // The second use: the first one is usually the original.
+          location: formatLocation(["paths", users[1]?.path ?? "", users[1]?.method ?? "", "operationId"]),
+        })),
+      ),
     };
   }
 
@@ -123,9 +126,7 @@ async function validate(input: string): Promise<SpecResult<ValidatedSpec>> {
 async function runValidator(document: JsonObject): Promise<SpecError[]> {
   const version = openApiVersion(document);
   const schemaErrors = checkAgainstOfficialSchema(document, version);
-  if (schemaErrors.length > 0) {
-    return schemaErrors.slice(0, MAX_VALIDATION_ERRORS).map((detail) => schemaProblem(detail));
-  }
+  if (schemaErrors.length > 0) return capProblems(relevantSchemaErrors(schemaErrors).map(schemaProblem));
   try {
     // The validator dereferences its input in place, so it gets a copy.
     const copy = structuredClone(document) as unknown as ParserDocument;
@@ -151,7 +152,7 @@ function unknownSecuritySchemes(document: JsonObject): SpecError[] {
     requirements.forEach((requirement, index) => {
       if (!isJsonObject(requirement)) return;
       for (const name of Object.keys(requirement)) {
-        if (Object.hasOwn(schemes, name) || errors.length >= MAX_VALIDATION_ERRORS) continue;
+        if (Object.hasOwn(schemes, name)) continue;
         errors.push({
           code: "unknown-security-scheme",
           message: `The security requirement "${name}" has no matching entry in components › securitySchemes. Declare the scheme or remove the requirement.`,
@@ -170,15 +171,13 @@ function unknownSecuritySchemes(document: JsonObject): SpecError[] {
       if (isJsonObject(operation)) check(operation.security, ["paths", path, method, "security"]);
     }
   }
-  return errors;
+  return capProblems(errors);
 }
 
 function validatorProblems(error: unknown, version: OpenApiVersion): SpecError[] {
   const details = error instanceof Error && "details" in error ? error.details : undefined;
   if (Array.isArray(details) && details.length > 0) {
-    return details
-      .slice(0, MAX_VALIDATION_ERRORS)
-      .map((detail: SchemaErrorDetail) => schemaProblem(detail));
+    return capProblems(relevantSchemaErrors(details as SchemaErrorDetail[]).map(schemaProblem));
   }
   const message = error instanceof Error ? firstLine(error.message) : "";
   return [
@@ -189,6 +188,43 @@ function validatorProblems(error: unknown, version: OpenApiVersion): SpecError[]
         : `The specification is not valid OpenAPI ${version}.`,
     },
   ];
+}
+
+/**
+ * The schema errors worth showing. Where the official schema allows either an
+ * object or a Reference object (`oneOf`, or `if`/`else` in 3.1), Ajv reports
+ * the real problem plus "must have required property '$ref'" and "must match
+ * exactly one schema in oneOf" for the same location. Those follow-up errors
+ * are dropped when a more specific error exists at that location or below it,
+ * and identical errors are reported once. Nothing is dropped when only
+ * follow-up errors exist.
+ */
+export function relevantSchemaErrors<T extends SchemaErrorDetail>(errors: readonly T[]): T[] {
+  const pathOf = (error: SchemaErrorDetail) => (typeof error.instancePath === "string" ? error.instancePath : "");
+  const isFollowUp = (error: SchemaErrorDetail) =>
+    error.keyword === "oneOf" ||
+    error.keyword === "anyOf" ||
+    error.keyword === "if" ||
+    (error.keyword === "required" &&
+      typeof error.params === "object" &&
+      error.params !== null &&
+      "missingProperty" in error.params &&
+      error.params.missingProperty === "$ref");
+  const specific = errors.filter((error) => !isFollowUp(error));
+  const coveredBySpecific = (error: SchemaErrorDetail) => {
+    const path = pathOf(error);
+    return specific.some((other) => pathOf(other) === path || pathOf(other).startsWith(`${path}/`));
+  };
+
+  const seen = new Set<string>();
+  const kept = errors.filter((error) => {
+    if (isFollowUp(error) && coveredBySpecific(error)) return false;
+    const key = JSON.stringify([pathOf(error), error.message, error.params]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return kept.length > 0 ? kept : [...errors];
 }
 
 function schemaProblem(detail: SchemaErrorDetail): SpecError {
@@ -207,6 +243,9 @@ function describeParams(params: unknown): string {
   if (typeof params !== "object" || params === null) return "";
   if ("additionalProperty" in params && typeof params.additionalProperty === "string") {
     return `: "${params.additionalProperty}"`;
+  }
+  if ("unevaluatedProperty" in params && typeof params.unevaluatedProperty === "string") {
+    return `: "${params.unevaluatedProperty}"`;
   }
   if ("allowedValues" in params && Array.isArray(params.allowedValues)) {
     return ` (${params.allowedValues.map(String).join(", ")})`;

@@ -10,9 +10,14 @@ vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("node:fs/promises", () => ({ access: accessMock }));
 vi.mock("./collect-output", () => ({ exceedsRawOutputLimits: exceedsMock }));
 
-const { generatorArguments, generatorJarPath, MAX_CONCURRENT_GENERATIONS, runGenerator } = await import("./java-generator");
+const { generatorArguments, generatorErrorDetails, generatorJarPath, isGeneratorBusy, runGenerator } = await import(
+  "./java-generator"
+);
+const { generatorRuntimeConfig } = await import("./runtime-config");
+const config = generatorRuntimeConfig();
 
 class FakeChild extends EventEmitter {
+  stderr = new EventEmitter();
   kill = vi.fn((signal: string) => {
     queueMicrotask(() => this.emit("close", null, signal));
     return true;
@@ -37,7 +42,7 @@ const run = {
 
 describe("generatorArguments", () => {
   it("builds a fixed argument list from target settings", () => {
-    expect(generatorArguments(run, "/app/gen.jar")).toEqual([
+    expect(generatorArguments(run, "/app/gen.jar", 256)).toEqual([
       "-Xmx256m",
       "-XX:-UsePerfData",
       "-jar",
@@ -55,8 +60,40 @@ describe("generatorArguments", () => {
       "generator-templates/typescript-fetch",
     ]);
   });
+
+  it("uses the configured heap size", () => {
+    expect(generatorArguments(run, "/app/gen.jar", 1024)[0]).toBe("-Xmx1024m");
+  });
 });
 
+describe("generatorErrorDetails", () => {
+  // As printed by OpenAPI Generator 7.26.0 for a 3.0 operation without responses.
+  const output = [
+    'Exception in thread "main" org.openapitools.codegen.SpecValidationException: There were issues with the specification. The option can be disabled via validateSpec (Maven/Gradle) or --skip-validate-spec (CLI).',
+    " | Error count: 2, Warning count: 0",
+    "Errors: ",
+    "\t-attribute paths.'/x'(get).responses is missing",
+    "\t-attribute /tmp/scrapi-abc123/spec.json is broken",
+    "",
+    "\tat org.openapitools.codegen.config.CodegenConfigurator.toContext(CodegenConfigurator.java:741)",
+  ].join("\n");
+
+  it("returns the error lines without the stack trace or temp paths", () => {
+    expect(generatorErrorDetails(output)).toEqual([
+      "attribute paths.'/x'(get).responses is missing",
+      "attribute <temp> is broken",
+    ]);
+  });
+
+  it("returns nothing for output without an Errors block", () => {
+    expect(generatorErrorDetails("java.lang.OutOfMemoryError: Java heap space\n\tat x.y(Z.java:1)")).toEqual([]);
+  });
+
+  it("keeps at most ten lines", () => {
+    const many = ["Errors:", ...Array.from({ length: 15 }, (_, index) => `\t-attribute a${String(index)} is missing`)].join("\n");
+    expect(generatorErrorDetails(many)).toHaveLength(10);
+  });
+});
 describe("generatorJarPath", () => {
   it("points at the version pinned in openapitools.json", () => {
     expect(generatorJarPath()).toBe(
@@ -108,9 +145,9 @@ describe("runGenerator", () => {
 
     expect(await outcome).toEqual({ status: "ok" });
     expect(spawnMock).toHaveBeenCalledWith(
-      "java",
+      config.javaCommand,
       generatorArguments(run, generatorJarPath() ?? ""),
-      expect.objectContaining({ shell: false, stdio: "ignore" }),
+      expect.objectContaining({ shell: false, stdio: ["ignore", "ignore", "pipe"] }),
     );
   });
 
@@ -122,7 +159,24 @@ describe("runGenerator", () => {
     });
     child.emit("close", 1);
 
-    expect(await outcome).toEqual({ status: "failed", exitCode: 1 });
+    expect(await outcome).toEqual({ status: "failed", exitCode: 1, details: [] });
+  });
+
+  it("reports the generator's validation errors from its error output", async () => {
+    const child = fakeProcess();
+    const outcome = runGenerator(run);
+    await vi.waitFor(() => {
+      expect(spawnMock).toHaveBeenCalled();
+    });
+    child.stderr.emit("data", Buffer.from("Exception in thread \"main\" SpecValidationException\nErrors: \n"));
+    child.stderr.emit("data", "\t-attribute paths.'/x'(get).responses is missing\n\n\tat org.example(X.java:1)\n");
+    child.emit("close", 1);
+
+    expect(await outcome).toEqual({
+      status: "failed",
+      exitCode: 1,
+      details: ["attribute paths.'/x'(get).responses is missing"],
+    });
   });
 
   it("kills the process with SIGKILL when it runs too long", async () => {
@@ -153,13 +207,14 @@ describe("runGenerator", () => {
   });
 
   it("rejects runs beyond the concurrency limit and frees slots afterwards", async () => {
-    const children = Array.from({ length: MAX_CONCURRENT_GENERATIONS }, () => new FakeChild());
+    const children = Array.from({ length: config.maxConcurrent }, () => new FakeChild());
     for (const child of children) spawnMock.mockReturnValueOnce(child);
     const running = children.map(() => runGenerator(run));
     await vi.waitFor(() => {
-      expect(spawnMock).toHaveBeenCalledTimes(MAX_CONCURRENT_GENERATIONS);
+      expect(spawnMock).toHaveBeenCalledTimes(config.maxConcurrent);
     });
 
+    expect(isGeneratorBusy()).toBe(true);
     expect(await runGenerator(run)).toEqual({ status: "busy" });
 
     for (const child of children) child.emit("close", 0);
@@ -167,7 +222,7 @@ describe("runGenerator", () => {
     const next = fakeProcess();
     const outcome = runGenerator(run);
     await vi.waitFor(() => {
-      expect(spawnMock).toHaveBeenCalledTimes(MAX_CONCURRENT_GENERATIONS + 1);
+      expect(spawnMock).toHaveBeenCalledTimes(config.maxConcurrent + 1);
     });
     next.emit("close", 0);
     expect(await outcome).toEqual({ status: "ok" });

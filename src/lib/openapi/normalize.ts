@@ -44,9 +44,10 @@ export function normalizeSpecification(text: string): SpecResult<NormalizedSpec>
     conversions.push("yaml");
   }
 
-  if (isJsonObject(document) && document.swagger === "2.0") {
+  if (isJsonObject(document) && isSwagger2(document.swagger)) {
     try {
-      document = toJsonValue(upgrade(document, "3.0"));
+      // The upgrader recognizes only the string "2.0".
+      document = toJsonValue(upgrade({ ...document, swagger: "2.0" }, "3.0"));
     } catch {
       return {
         ok: false,
@@ -63,6 +64,14 @@ export function normalizeSpecification(text: string): SpecResult<NormalizedSpec>
   }
 
   return conversions.length === 0 ? unchanged(text) : { ok: true, value: { text: JSON.stringify(document), conversions } };
+}
+
+/**
+ * Swagger 2.0 as written: the string "2.0", or the number 2 that YAML makes
+ * of an unquoted `swagger: 2.0`.
+ */
+function isSwagger2(value: JsonValue | undefined): boolean {
+  return value === "2.0" || value === 2;
 }
 
 function unchanged(text: string): SpecResult<NormalizedSpec> {
