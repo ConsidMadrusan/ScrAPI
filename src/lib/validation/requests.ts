@@ -96,11 +96,17 @@ export type GraphqlGenerateRequest = z.infer<typeof graphqlGenerateRequestSchema
  * A server-side load of a URL, used only when the browser cannot read it
  * (CORS). `kind` picks one of two fixed requests; there is no method or body.
  */
+/** A URL ScrAPI's server may load (checked further by `fetchUrl`). */
+export const sourceUrlSchema = z.string().max(2048, "The URL is too long.");
+
+/** Request headers sent along when ScrAPI's server loads a URL (checked further by `fetchUrl`). */
+export const sourceHeadersSchema = z
+  .record(z.string().max(256), z.string().max(8192))
+  .refine((headers) => Object.keys(headers).length <= 20, "Add at most 20 request headers.");
+
 export const fetchSourceRequestSchema = z.object({
-  url: z.string().max(2048, "The URL is too long."),
+  url: sourceUrlSchema,
   kind: z.enum(["document", "introspection"]),
-  headers: z
-    .record(z.string().max(256), z.string().max(8192))
-    .refine((headers) => Object.keys(headers).length <= 20, "Add at most 20 request headers."),
+  headers: sourceHeadersSchema,
 });
 export type FetchSourceRequest = z.infer<typeof fetchSourceRequestSchema>;

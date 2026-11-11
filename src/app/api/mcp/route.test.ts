@@ -15,6 +15,16 @@ vi.mock("@/lib/generation/generate", () => ({ generateClient: generateClientMock
 const busy = vi.hoisted(() => ({ value: false }));
 vi.mock("@/lib/generation/java-generator", () => ({ isGeneratorBusy: () => busy.value }));
 
+/** URL loading on the server, replaced so no test touches the network. */
+const loadUrlSourceMock = vi.hoisted(() =>
+  vi.fn<
+    (url: string, headers: Record<string, string>, kind: string) => Promise<
+      { ok: true; text: string; kind: "openapi" | "graphql" } | { ok: false; errors: { code: string; message: string }[] }
+    >
+  >(),
+);
+vi.mock("@/lib/source/load-url", () => ({ loadUrlSource: loadUrlSourceMock }));
+
 const { POST, GET } = await import("./route");
 
 const spec = (name: string) => readFileSync(join(process.cwd(), "samples/specs", name), "utf8");
@@ -92,6 +102,7 @@ interface GenerateFiles {
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   generateClientMock.mockReset();
+  loadUrlSourceMock.mockReset();
   busy.value = false;
 });
 
@@ -286,5 +297,81 @@ describe("scrapi_generate", () => {
     expect(files.kind).toBe("graphql");
     expect(files.results[0]?.files.map((file) => file.destinationPath)).toContain("src/lib/api-client/graphql.ts");
     expect(generateClientMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("loading the description from a URL", () => {
+  const ENDPOINT = "https://api.example.com/graphql";
+  const introspection = JSON.stringify({ __schema: (JSON.parse(spec("books-introspection.json")) as { data: { __schema: unknown } }).data.__schema });
+
+  it("validates a GraphQL endpoint that ScrAPI's server introspects", async () => {
+    loadUrlSourceMock.mockResolvedValue({ ok: true, text: introspection, kind: "graphql" });
+
+    const result = await callTool("scrapi_validate", { url: ENDPOINT, headers: { Authorization: "Bearer t" } });
+
+    expect(result.isError).toBeFalsy();
+    const body = firstJson(result) as { kind: string; groups: { operations: { id: string }[] }[] };
+    expect(body.kind).toBe("graphql");
+    expect(body.groups[0]?.operations.map((operation) => operation.id)).toContain("query books");
+    expect(loadUrlSourceMock).toHaveBeenCalledWith(ENDPOINT, { Authorization: "Bearer t" }, "auto", expect.anything());
+  });
+
+  it("generates from a URL with the requested kind", async () => {
+    loadUrlSourceMock.mockResolvedValue({ ok: true, text: introspection, kind: "graphql" });
+
+    const result = await callTool("scrapi_generate", {
+      url: ENDPOINT,
+      kind: "graphql",
+      combinations: ["nextjs-fetch"],
+      operations: ["query books"],
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect((firstJson(result) as GenerateFiles).results[0]?.files.map((file) => file.destinationPath)).toContain(
+      "src/lib/api-client/graphql.ts",
+    );
+    expect(loadUrlSourceMock).toHaveBeenCalledWith(ENDPOINT, {}, "graphql", expect.anything());
+  });
+
+  it("reports why the URL could not be loaded", async () => {
+    loadUrlSourceMock.mockResolvedValue({
+      ok: false,
+      errors: [{ code: "blocked-address", message: "This URL points to a private or local network address." }],
+    });
+
+    const result = await callTool("scrapi_validate", { url: "http://10.0.0.1/openapi.json" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("private or local network address");
+  });
+
+  it("words loading problems for an agent, not for the web app", async () => {
+    loadUrlSourceMock.mockResolvedValue({
+      ok: false,
+      errors: [
+        { code: "private-url", message: "ScrAPI's server only loads public internet addresses, and your browser could not load this one (CORS)." },
+        { code: "url-timeout", message: "The URL did not answer within 20 seconds. Try again, or download the file and upload it." },
+      ],
+    });
+
+    const result = await callTool("scrapi_validate", { url: "http://localhost:8080/openapi.json" });
+
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toMatch(/browser|upload/);
+    expect(text).toContain("pass its contents as source");
+    expect(text).toContain("SCRAPI_ALLOW_PRIVATE_URLS=true");
+  });
+
+  it("rejects both source and url", async () => {
+    const result = await callTool("scrapi_validate", { source: todo, url: ENDPOINT });
+
+    expect(result.isError).toBe(true);
+    expect(loadUrlSourceMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects neither source nor url", async () => {
+    const result = await callTool("scrapi_generate", { combinations: ["csharp"], allOperations: true });
+
+    expect(result.isError).toBe(true);
   });
 });

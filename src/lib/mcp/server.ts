@@ -10,12 +10,13 @@ import type { Problem } from "@/lib/validation/problems";
 import { version } from "../../../package.json";
 import { generateForAgent } from "./generate-all";
 import { generateToolInputSchema, validateToolInputSchema } from "./schemas";
+import { resolveSourceText } from "./source";
 
 /** Tool names, also referenced by the agent skills in `integrations/`. */
 export const TOOL_NAMES = ["scrapi_list_targets", "scrapi_validate", "scrapi_generate"] as const;
 
 const INSTRUCTIONS = `ScrAPI turns an API description (OpenAPI 3.0/3.1, Swagger 2.0, or a GraphQL schema) into typed client code for Next.js, Nuxt, Angular, or C#/.NET projects, using deterministic generators.
-Workflow: scrapi_list_targets to pick framework combinations for the user's project, scrapi_validate to list the operations, then scrapi_generate with the chosen operations. scrapi_generate returns every file with its destination path in the project and an integration guide. ScrAPI never writes files: you write them into the project and follow the guide's edit steps.`;
+Workflow: scrapi_list_targets to pick framework combinations for the user's project, scrapi_validate to list the operations (pass the description text as source, or its public URL as url when you cannot load it yourself), then scrapi_generate with the chosen operations. scrapi_generate returns every file with its destination path in the project and an integration guide. ScrAPI never writes files: you write them into the project and follow the guide's edit steps.`;
 
 /** Project markers an agent can look for to choose a combination. */
 const DETECTION_HINTS: Record<string, string> = {
@@ -59,11 +60,14 @@ export function createScrapiMcpServer(): McpServer {
     {
       title: "Validate an API description",
       description:
-        "Validates an OpenAPI/Swagger document or GraphQL schema and lists its operations, grouped by tag (OpenAPI) or root type (GraphQL). Pass the operation ids to scrapi_generate.",
+        "Validates an OpenAPI/Swagger document or GraphQL schema and lists its operations, grouped by tag (OpenAPI) or root type (GraphQL). Pass the description as source, or its public URL as url (ScrAPI's server loads it; GraphQL endpoints are introspected). Pass the same source or url and the operation ids to scrapi_generate.",
       inputSchema: validateToolInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    async ({ source }) => {
+    async (input, ctx) => {
+      const loaded = await resolveSourceText(input, ctx.mcpReq.signal);
+      if (!loaded.ok) return failure(loaded.problems);
+      const source = loaded.text;
       if (detectSourceKind(source) === "graphql") {
         const result = describeGraphql(source);
         if (!result.ok) return failure(result.errors);

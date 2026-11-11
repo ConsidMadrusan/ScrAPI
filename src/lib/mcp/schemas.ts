@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MAX_COMBINATIONS, MAX_SELECTED_OPERATIONS } from "@/lib/validation/limits";
-import { projectModeSchema, specTextSchema } from "@/lib/validation/requests";
+import { projectModeSchema, sourceHeadersSchema, sourceUrlSchema, specTextSchema } from "@/lib/validation/requests";
 
 /**
  * Framework combination keys an agent can request, in `COMBINATIONS` order.
@@ -17,16 +17,39 @@ export const COMBINATION_KEYS = [
 export const combinationKeySchema = z.enum(COMBINATION_KEYS);
 export type CombinationKey = z.infer<typeof combinationKeySchema>;
 
-const sourceSchema = specTextSchema.describe(
-  "The full API description text: an OpenAPI 3.0/3.1 or Swagger 2.0 document (JSON or YAML), or a GraphQL schema (SDL or introspection JSON). Read it from a file or URL yourself and pass its contents; ScrAPI does not load URLs here.",
-);
+/** Where the API description comes from: its text, or a URL ScrAPI's server loads. */
+const sourceFields = {
+  source: specTextSchema
+    .optional()
+    .describe(
+      "The full API description text: an OpenAPI 3.0/3.1 or Swagger 2.0 document (JSON or YAML), or a GraphQL schema (SDL or introspection JSON). Give either source or url.",
+    ),
+  url: sourceUrlSchema
+    .optional()
+    .describe(
+      "A public http(s) URL of the API description, loaded by ScrAPI's server: an OpenAPI/Swagger document, or a GraphQL endpoint (introspected). Use it when you cannot load the URL yourself. Give either source or url.",
+    ),
+  headers: sourceHeadersSchema
+    .optional()
+    .describe('Request headers sent with url only, for example {"Authorization": "Bearer <token>"}. Never stored or logged.'),
+  kind: z
+    .enum(["auto", "openapi", "graphql"])
+    .default("auto")
+    .describe('How url is loaded: "openapi" GETs a document, "graphql" introspects an endpoint, "auto" (default) tries the document first, then introspection.'),
+};
 
-export const validateToolInputSchema = z.object({ source: sourceSchema });
+/** Exactly one of `source` and `url`. */
+function oneSource(input: { source?: string | undefined; url?: string | undefined }): boolean {
+  return (input.source !== undefined) !== (input.url !== undefined);
+}
+const ONE_SOURCE = { message: "Give either source (the description text) or url, not both and not neither.", path: ["source"] };
+
+export const validateToolInputSchema = z.object(sourceFields).refine(oneSource, ONE_SOURCE);
 export type ValidateToolInput = z.infer<typeof validateToolInputSchema>;
 
 export const generateToolInputSchema = z
   .object({
-    source: sourceSchema,
+    ...sourceFields,
     combinations: z
       .array(combinationKeySchema)
       .min(1, "Choose at least one framework combination.")
@@ -47,6 +70,7 @@ export const generateToolInputSchema = z
       .default("existing")
       .describe('"existing" to add the client to an existing project, "new" for a guide that starts with the official project-creation commands.'),
   })
+  .refine(oneSource, ONE_SOURCE)
   .refine((input) => (input.allOperations === true) !== (input.operations !== undefined), {
     message: "Give either operations or allOperations: true, not both and not neither.",
     path: ["operations"],

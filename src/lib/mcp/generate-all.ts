@@ -15,6 +15,7 @@ import { listSome, type Problem } from "@/lib/validation/problems";
 import type { GenerationOptions, ProjectMode } from "@/lib/validation/requests";
 import type { GenerateSuccess, GraphqlOperation, OperationSummary } from "@/lib/validation/responses";
 import type { GenerateToolInput } from "./schemas";
+import { resolveSourceText } from "./source";
 
 /** One generated combination, with each file at its path in the supported project layout. */
 export interface McpCombinationResult {
@@ -52,7 +53,9 @@ export type Described =
  * reported next to the successful ones instead of failing the whole run.
  */
 export async function generateForAgent(input: GenerateToolInput, signal?: AbortSignal): Promise<McpGenerateResult> {
-  const described = await describe(input.source);
+  const text = await resolveSourceText(input, signal);
+  if (!text.ok) return text;
+  const described = await describe(text.text);
   if (!described.ok) return described;
 
   const selected = resolveIds(described.value, input);

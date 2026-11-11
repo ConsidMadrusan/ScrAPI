@@ -17,7 +17,7 @@ Do not write client code by hand instead.
 
 ## Workflow
 
-1. **Find the API description.** Use the file or URL the user names, or look for one in the repository (`openapi.json`, `openapi.yaml`, `swagger.json`, `*.graphql`, `schema.json`). Read a URL yourself and pass its text; the tools take the description's contents, not a URL. If there is none, ask.
+1. **Find the API description.** Use the file or URL the user names, or look for one in the repository (`openapi.json`, `openapi.yaml`, `swagger.json`, `*.graphql`, `schema.json`). Pass a file's contents as `source`. For a URL, read it yourself and pass its text, or pass it as `url` and ScrAPI's server loads it: use that whenever you cannot reach the URL (no network access, DNS or sandbox errors). A GraphQL endpoint URL is introspected; set `kind` to `"graphql"` or `"openapi"` if you know it, and pass `headers` (for example `Authorization`) when the user gives credentials. Pass the same `source` or `url` to both `scrapi_validate` and `scrapi_generate`. If there is none, ask.
 
 2. **Choose the framework combination(s).** Call `scrapi_list_targets` and match the project against each combination's `detect` hint:
    - `package.json` with `next` → `nextjs-axios` if `axios` is a dependency, otherwise `nextjs-fetch`.
@@ -26,9 +26,9 @@ Do not write client code by hand instead.
    - A `*.sln` or `*.csproj` → `csharp`.
    - A monorepo can need several. When nothing matches or the choice is ambiguous, ask the user.
 
-3. **Validate and choose operations.** Call `scrapi_validate` with the description text. On an error, show the user the messages; they describe what is wrong in the description. Otherwise summarize the groups (tags, or Queries/Mutations). Unless the user already said which operations they need, ask them, or confirm before using all of them. Use the exact operation ids from the result (`GET /users/{id}`, `query books`).
+3. **Validate and choose operations.** Call `scrapi_validate` with the description (`source` or `url`). On an error, show the user the messages; they describe what is wrong in the description. Otherwise summarize the groups (tags, or Queries/Mutations). Unless the user already said which operations they need, ask them, or confirm before using all of them. Use the exact operation ids from the result (`GET /users/{id}`, `query books`).
 
-4. **Generate.** Call `scrapi_generate` with the same `source`, the `combinations`, and either `operations` (ids) or `allOperations: true`. Set `project` to `"new"` only when the user is creating a new project; the default `"existing"` adds the client to the current one.
+4. **Generate.** Call `scrapi_generate` with the same `source` or `url`, the `combinations`, and either `operations` (ids) or `allOperations: true`. Set `project` to `"new"` only when the user is creating a new project; the default `"existing"` adds the client to the current one.
    - The first text block is JSON: `results` (one per combination, with `destinationRoot` and `files`) and `failures` (combinations that failed, with their problems; report them, the others are still usable).
    - The second text block is the integration guide in Markdown. It refers to ZIP folders such as `nextjs-axios/api-client/`; each file's `destinationPath` already gives its place in the project.
    - If the result is too large, generate fewer operations or one combination at a time.
