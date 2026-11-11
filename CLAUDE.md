@@ -4,7 +4,7 @@ Guidance for coding agents working in this repository. Read this file, `README.m
 
 ## Current status
 
-The **MVP is implemented** (all four phases) and released: `v0.3.0` is the latest image on ghcr.io (`v0.1.0` before it). The MCP endpoint and agent plugins below are newer than 0.3.0. `README.md` is a short introduction; the details live in `docs/` (`how-it-works.md`, `self-hosting.md`, `ai-agents.md`, `architecture.md`, `development.md`, `project-plan.md`). The repository contains:
+The **MVP is implemented** (all four phases) and released (`v0.1.0`, `v0.3.0` on ghcr.io). Version 1.0.1 (in `package.json`, not yet tagged when this was written) adds the MCP endpoint, the agent plugins, and the default port 13000 (images up to 0.3.0 listen on 3000). `README.md` is a short introduction; the details live in `docs/` (`how-it-works.md`, `self-hosting.md`, `ai-agents.md`, `architecture.md`, `development.md`, `project-plan.md`). The repository contains:
 
 - The full flow from API description to ZIP download:
   - input from paste, upload, or a URL loaded **in the browser** (`src/components/workflow/fetch-source.ts`; GraphQL endpoints by introspection)

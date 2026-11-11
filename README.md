@@ -70,7 +70,7 @@ services:
 
 Start it with `docker compose up -d` and stop it with `docker compose down`.
 
-- For anything that should last, pin a release instead of `latest`, for example `ghcr.io/considmadrusan/scrapi:0.3.0`.
+- For anything that should last, pin a release instead of `latest`, for example `ghcr.io/considmadrusan/scrapi:1.0.1`.
 - Read-only with a `/tmp` tmpfs keeps the container read-only except for the temporary files of each request, and 512 MB of memory is enough for the default settings.
 - The container needs no outbound network access, no volumes, and no secrets.
 
@@ -95,7 +95,7 @@ ScrAPI also has an MCP endpoint (`/api/mcp`), so coding agents can run the same 
 
 The plugins connect to `http://localhost:13000/api/mcp` by default. If your server uses another port or a domain, change the URL with one command, for example `/plugin configure scrapi@scrapi` in Claude Code or `codex mcp add scrapi --url https://scrapi.example.com/api/mcp` in Codex. See [Your server's URL](docs/ai-agents.md#your-servers-url).
 
-The endpoint is newer than release 0.3.0. Setup for every agent is in [Use ScrAPI from AI agents](docs/ai-agents.md).
+The endpoint and port 13000 are available from release 1.0.1. Setup for every agent is in [Use ScrAPI from AI agents](docs/ai-agents.md).
 
 ## Releases
 
