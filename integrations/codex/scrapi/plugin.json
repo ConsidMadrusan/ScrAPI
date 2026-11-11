@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "scrapi",
+  "version": "0.3.0",
+  "description": "Generate typed API clients (Next.js, Nuxt, Angular, C#/.NET) from OpenAPI, Swagger, or GraphQL with a ScrAPI server.",
+  "author": { "name": "ConsidMadrusan", "url": "https://github.com/ConsidMadrusan" },
+  "homepage": "https://github.com/ConsidMadrusan/ScrAPI",
+  "repository": "https://github.com/ConsidMadrusan/ScrAPI",
+  "keywords": ["openapi", "swagger", "graphql", "api-client", "codegen", "mcp"]
+}

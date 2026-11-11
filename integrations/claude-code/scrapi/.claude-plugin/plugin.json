@@ -1,0 +1,17 @@
+{
+  "name": "scrapi",
+  "version": "0.3.0",
+  "description": "Generate typed API clients (Next.js, Nuxt, Angular, C#/.NET) from OpenAPI, Swagger, or GraphQL with a ScrAPI server.",
+  "author": { "name": "ConsidMadrusan", "url": "https://github.com/ConsidMadrusan" },
+  "homepage": "https://github.com/ConsidMadrusan/ScrAPI",
+  "repository": "https://github.com/ConsidMadrusan/ScrAPI",
+  "keywords": ["openapi", "swagger", "graphql", "api-client", "codegen", "mcp"],
+  "userConfig": {
+    "scrapi_mcp_url": {
+      "type": "string",
+      "title": "ScrAPI MCP server URL",
+      "description": "The /api/mcp address of your ScrAPI server, for example https://scrapi.example.com/api/mcp or http://localhost:13000/api/mcp.",
+      "default": "http://localhost:13000/api/mcp"
+    }
+  }
+}

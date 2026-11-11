@@ -1,12 +1,9 @@
-import { isIntrospectionType, isSpecifiedScalarType, printSchema } from "graphql";
-import { groupGraphqlOperations, listGraphqlOperations, subscriptionCount } from "@/lib/graphql/operations";
-import { parseGraphqlSchema } from "@/lib/graphql/parse";
+import { describeGraphql } from "@/lib/source/describe";
 import { MAX_REQUEST_BYTES } from "@/lib/validation/limits";
 import { failureResponse, internalErrorResponse } from "@/lib/validation/http";
 import { problemsFromZod } from "@/lib/validation/problems";
 import { readJsonBody } from "@/lib/validation/read-request";
 import { graphqlValidateRequestSchema } from "@/lib/validation/requests";
-import type { GraphqlValidateSuccess } from "@/lib/validation/responses";
 
 /**
  * Validates a GraphQL schema (SDL or introspection JSON) and lists the root
@@ -21,32 +18,9 @@ export async function POST(request: Request): Promise<Response> {
   if (!input.success) return failureResponse(400, problemsFromZod(input.error));
 
   try {
-    const parsed = parseGraphqlSchema(input.data.schema);
-    if (!parsed.ok) return failureResponse(422, parsed.errors);
-    const schema = parsed.value;
-
-    const operations = listGraphqlOperations(schema);
-    if (operations.length === 0) {
-      return failureResponse(422, [
-        { code: "no-operations", message: "The schema has no Query or Mutation fields to generate." },
-      ]);
-    }
-    const title = schema.description?.split("\n")[0]?.trim() ?? "";
-    const response: GraphqlValidateSuccess = {
-      ok: true,
-      kind: "graphql",
-      schema: printSchema(schema),
-      info: {
-        title: title === "" ? "GraphQL API" : title,
-        typeCount: Object.values(schema.getTypeMap()).filter(
-          (type) => !isIntrospectionType(type) && !isSpecifiedScalarType(type),
-        ).length,
-        subscriptionCount: subscriptionCount(schema),
-      },
-      operations,
-      groups: groupGraphqlOperations(operations),
-    };
-    return Response.json(response);
+    const result = describeGraphql(input.data.schema);
+    if (!result.ok) return failureResponse(result.status, result.errors);
+    return Response.json(result);
   } catch (error) {
     return internalErrorResponse("GraphQL validation crashed", error, "Something went wrong while validating. Try again.");
   }

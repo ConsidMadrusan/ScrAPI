@@ -34,6 +34,12 @@ export const MAX_ARCHIVE_REQUEST_BYTES = 48 * 1024 * 1024;
 /** Most ZIP requests the server handles at once; further requests are rejected as busy. */
 export const MAX_CONCURRENT_ARCHIVES = 2;
 
+/**
+ * Largest MCP tool result with inline file contents, in UTF-8 bytes. Kept far
+ * below the ZIP limits because the whole result enters the agent's context.
+ */
+export const MAX_MCP_RESULT_BYTES = 2 * 1024 * 1024;
+
 /** Most operations a single generation request may select. */
 export const MAX_SELECTED_OPERATIONS = 5000;
 

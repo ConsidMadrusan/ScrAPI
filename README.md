@@ -1,342 +1,126 @@
 # ScrAPI
 
-Generate typed API clients from OpenAPI or Swagger specifications and GraphQL schemas, choose exactly which endpoints you need, and get a step-by-step guide for adding the code to your existing project.
+[![CI](https://github.com/ConsidMadrusan/ScrAPI/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ConsidMadrusan/ScrAPI/actions/workflows/ci.yml?query=branch%3Amain)
+[![Release image](https://github.com/ConsidMadrusan/ScrAPI/actions/workflows/release-image.yml/badge.svg)](https://github.com/ConsidMadrusan/ScrAPI/actions/workflows/release-image.yml)
+[![Latest release](https://img.shields.io/github/v/tag/ConsidMadrusan/ScrAPI?sort=semver&label=release)](https://github.com/ConsidMadrusan/ScrAPI/tags)
+[![Docker image](https://img.shields.io/badge/ghcr.io-considmadrusan%2Fscrapi-2496ED?logo=docker&logoColor=white)](https://github.com/ConsidMadrusan/ScrAPI/pkgs/container/scrapi)
 
-> **Status: MVP complete, not yet released.** The full workflow works: provide a specification, select operations, choose one or more framework combinations, generate code, download one ZIP, and follow the integration guide. The Docker image builds and runs. No version has been tagged or published yet.
+Turn an OpenAPI, Swagger, or GraphQL description into typed API client code for your Next.js, Nuxt, Angular, or .NET project. Choose exactly the endpoints you need, and follow a step-by-step guide that shows where every file goes.
 
-## Demo
+**[Try the demo →](https://scrapi-demo.madrusan.se)**
 
-https://scrapi-demo.madrusan.se
+## What it does
 
-## The problem
+Consuming an HTTP API usually means writing the same code by hand: DTOs, enums, request and response types, and one client method per endpoint, then keeping it all in sync with the API. Generators can automate that, but they usually produce code for the whole API with little help on where it belongs in a real project.
 
-Consuming an HTTP API usually means writing the same code by hand: DTOs, enums, request and response types, and one client method per endpoint, then keeping them in sync with the API. It is repetitive and error-prone, and generator tools that automate it often produce output for the whole API with little guidance on where the files belong in a real project.
+ScrAPI wraps existing, deterministic generators in a focused workflow:
 
-ScrAPI wraps existing deterministic generators in a focused workflow: pick the endpoints you need, generate typed integration code for your target, and add it to your project with clear, accurate instructions.
+- **Any common API description:** OpenAPI 3.0 and 3.1, Swagger 2.0, JSON or YAML, and GraphQL schemas (SDL or introspection). Paste it, upload a file, or load it from a URL.
+- **Only the endpoints you need:** select operations individually or by tag. ScrAPI keeps every model and shared component they depend on, and nothing else.
+- **Code for your framework:** Next.js/React, Nuxt/Vue (with `axios` or `fetch`), Angular, and C#/.NET, several at once if you like.
+- **A guide, not just files:** download one ZIP, or follow a visual step-by-step guide with the exact destination paths, dependencies, configuration, and a usage example built from your own operations.
+- **Predictable and private:** no AI involved, the same input always gives the same output. ScrAPI never writes into your project and keeps nothing after a request.
 
-## User workflow
+## How it works
 
-Each stage has its own page; the workflow moves to the next one when the current stage is complete.
+1. **Provide** an API description. It is validated right away, with errors in plain language.
+2. **Select** the operations to generate.
+3. **Choose** your framework combinations, and whether the code goes into an existing or a new project.
+4. **Generate.** ScrAPI runs the generators on its server, one combination at a time.
+5. **Implement:** download the ZIP or follow the step-by-step guide.
 
-1. **Provide an API description** (`/`): paste it, upload a file (`.json`, `.yaml`, `.yml`, `.graphql`, `.graphqls`, `.gql`), or **load it from a URL**: the address of an OpenAPI/Swagger document, or a GraphQL endpoint, which is introspected. Your **browser** loads the URL first, so APIs on your own machine (`localhost`) work when they allow requests from other sites (CORS). If the browser cannot read it (usually CORS), **ScrAPI's server loads it instead**, but only from public internet addresses, unless the deployment sets `SCRAPI_ALLOW_PRIVATE_URLS=true` (see "Self-hosting with Docker"). Optional request headers (for example `Authorization`) are sent only with the request to that URL; when the server makes the request, they pass through it and are never stored or logged. YAML and Swagger 2.0 are converted to OpenAPI JSON on the server (your input stays unchanged). ScrAPI validates the input as soon as it is pasted, uploaded, or loaded (typed input is checked with **Continue**): well-formed JSON or YAML, a supported OpenAPI version (3.0.x or 3.1.x, or Swagger 2.0), valid according to the OpenAPI standard (checked against the official OpenAPI JSON Schema for its version, included in the repository: 3.0 revision 2024-10-18, 3.1 revision 2026-08-03), and self-contained. Errors are reported in plain language; a valid specification opens the next stage.
-2. **Select endpoints** (`/select`): choose which operations to generate (for GraphQL: Query and Mutation fields), then press **Next**.
-3. **Choose frameworks** (`/targets`): choose whether the code goes into an **existing project** or a **new project**, and pick one or more framework combinations: TypeScript for Next.js/React or Nuxt/Vue (each with the `axios` and/or `fetch` HTTP client), TypeScript for Angular, and C#/.NET. Press **Generate**. For a new project, the guide starts with the official CLI commands that create it (`create-next-app`, `create-nuxt`, the Angular CLI, or `dotnet new` for a solution with an ASP.NET Core Web API project); every later step then uses that project's paths.
-4. **Generate** (`/generating`): a loading screen shows the progress of each combination while ScrAPI runs an existing generator on the server, one combination at a time.
-5. **Implement** (`/implement`): a landing screen with two choices. **Download ZIP** starts the download of one ZIP with every generated client, and the card then shows that the ZIP was downloaded (with a link to download it again). **Step-by-step guide** opens `/implement/guide`: an onboarding-style flow with one step at a time, a progress bar, and Back/Next, covering every combination in turn; **Finish** returns to the landing screen. If some combinations failed, the others are still available and each failed one can be retried.
+Read more in [How ScrAPI works](docs/how-it-works.md).
 
-The workflow state lives in the browser tab only. Reloading a later stage returns you to the start.
+## Supported targets
 
-ScrAPI never writes into your project. You copy the files or extract the ZIP yourself.
+| Target | HTTP client | Files go to |
+| --- | --- | --- |
+| TypeScript for Next.js / React | `axios` or `fetch` | `src/lib/api-client/` |
+| TypeScript for Nuxt / Vue | `axios` or `fetch` | `app/lib/api-client/` |
+| TypeScript for Angular | Angular `HttpClient` | `src/app/api-client/` |
+| C# / .NET | `HttpClient` (generic host) | `src/ApiClient/`, next to your solution |
 
-## Endpoint selection
+Each guide is verified against a project created with the framework's official CLI. See [Targets and output](docs/how-it-works.md#targets-and-output) for versions and details.
 
-After validation, ScrAPI lists every API operation:
+## Run it on your machine
 
-- Operations are grouped by tag. Untagged operations appear in an **Other** group.
-- Each operation shows its HTTP method, path, and summary.
-- You can select operations individually, by group, or select/clear all.
-- Search filters by path, summary, or operation ID.
-- Each method + path combination is a separate operation. `GET /users` and `POST /users` can be selected independently.
-- An operation that belongs to several tags is one operation: selecting it in one group selects it everywhere, and the count is not inflated.
-- The number of selected operations is always visible.
-- At least one operation must be selected before generating.
-
-Only selected operations get client methods. ScrAPI automatically includes the models, enums, shared configuration, and supporting dependencies those operations need, including transitively referenced schemas.
-
-The original specification is preserved. ScrAPI filters a separate copy and keeps the references and shared components needed for valid generation. That includes references from parameters, request bodies, responses, and composed schemas (`allOf`, `oneOf`, `anyOf`), not only schemas an operation references directly.
-
-## Targets and output
-
-| Target                       | Generated client                                               | Typical contents                                                                         | Integration guide covers                                                                                                             |
-| ---------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| C#/.NET                      | C# client library                                              | Models/DTOs, enums, typed API methods, client configuration, project/dependency metadata | Adding the code to a supported .NET project layout, required package references, configuring the base URL, calling a selected method |
-| TypeScript for Next.js/React | Framework-independent TypeScript client (shared with Nuxt/Vue) | Model interfaces/types, enums, typed API methods, client configuration                   | Placement in a supported Next.js App Router layout, configuration, calling a selected method from server or client code              |
-| TypeScript for Nuxt/Vue      | Same framework-independent TypeScript client                   | Same as above                                                                            | Placement in a supported Nuxt layout, configuration, calling a selected method                                                       |
-| TypeScript for Angular       | Angular client/service structure                               | Models, enums, injectable API services, configuration                                    | Placement in a supported Angular layout, registering HTTP/client providers, injecting and calling a service                          |
-
-Verified setups (OpenAPI Generator 7.26.0). Each guide documents one supported project layout:
-
-| Target        | Generator                                                             | Files go to                            | Verified by following the guide in                                                          |
-| ------------- | --------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Next.js/React | `typescript-axios` or `typescript-fetch` (you choose the HTTP client) | `src/lib/api-client/`                  | A `create-next-app` project (Next.js 16.4, App Router, `src/`): `tsc` and `next build`      |
-| Nuxt/Vue      | Same as Next.js                                                       | `app/lib/api-client/`                  | A `nuxi init` project (Nuxt 4.6): `nuxi typecheck` (vue-tsc, TypeScript 6) and `nuxt build` |
-| Angular       | `typescript-angular`                                                  | `src/app/api-client/`                  | An `ng new` standalone app (Angular 22.2): `ng build`                                       |
-| C#/.NET       | `csharp` (`generichost`, `net10.0`)                                   | `src/ApiClient/` next to your solution | A `dotnet new webapi` project (.NET 10): `dotnet build`                                     |
-
-Other framework versions or layouts may work but have not been tested.
-
-ScrAPI does **not** generate UI, React hooks, Vue composables, framework-specific SSR integrations, complete app scaffolds, databases, or business logic.
-
-## ZIP download and visual integration guide
-
-Both delivery options are built from the **same generation results**, so file paths and contents always match.
-
-**Download ZIP** (`scrapi-clients.zip`) contains one folder per framework combination (`nextjs-axios/`, `nextjs-fetch/`, `nuxt-axios/`, `nuxt-fetch/`, `angular/`, `csharp/`), each holding that combination's generated folder, plus one `INTEGRATION.md` with the steps for every combination.
-
-**Step-by-step guide** walks you through adding the generated code manually, one step at a time and one combination after another:
-
-- The supported project setup, versions, and assumptions for the target.
-- A visual folder tree showing where generated files belong.
-- Numbered steps for which folders and files to create or copy. Larger outputs are grouped into logical steps, not one step per file.
-- The exact destination path for each generated file, with an explicit mapping where it differs from the path in the ZIP.
-- A file viewer with syntax highlighting and a copy button for each file's full contents.
-- Required dependencies and configuration changes, consistent with the generated output.
-- A minimal example that imports and calls one of your selected operations. Values you must supply (base URL, tokens, IDs) are clearly marked. Nothing is invented.
-- Basic verification steps and common integration errors.
-- Back/next navigation, a progress bar, and a visible step indicator.
-
-Guides are deterministic templates per target, not AI-generated. They document one supported project layout per target and do not claim to fit every project. They separate _adding new files_ from _small changes to existing configuration_, and never ask you to replace existing application files wholesale.
-
-## What "typed generation" means
-
-Guaranteed:
-
-- Types are derived from the input specification, deterministically.
-- The TypeScript output gives compile-time type checking for the selected operations' parameters, request bodies, and responses, as described by the specification.
-
-Not guaranteed:
-
-- **Precision beyond the specification.** Incomplete or unrestricted schemas (missing `type`, free-form objects, `additionalProperties: true`) cannot produce precise types. Loose input produces loose output.
-- **Runtime validation.** TypeScript types are erased at runtime and do not check that a server's response matches the specification. The generated clients do not include Zod schemas or automatic runtime response validation.
-- **API correctness.** If the specification does not match the real API, the generated code will not either.
-
-## MVP scope
-
-Included:
-
-- One specification and one or more framework combinations per generation.
-- Paste, file upload, or a URL loaded in the browser; JSON or YAML; GraphQL SDL or introspection JSON.
-- Swagger 2.0, converted to OpenAPI 3.0 before generation.
-- GraphQL schemas: Query and Mutation fields, for all four targets. See "GraphQL" below.
-- OpenAPI 3.0.x and 3.1.x, explicitly documented. Other versions (including 3.2, which the pinned OpenAPI Generator 7.26.0 cannot read) are rejected with a clear error until support is verified. See "OpenAPI 3.1 notes" below.
-- Self-contained specifications with internal references (`#/components/...`).
-- Endpoint selection with dependency-aware filtering.
-- All four output targets.
-- ZIP download and visual step-by-step integration guide.
-
-### GraphQL
-
-GraphQL has no endpoints: a client is generated from the schema plus the operations (queries and mutations) it sends. ScrAPI builds **one operation per selected root field**:
-
-- every argument becomes a variable;
-- the result selects scalar and enum fields **two levels deep**, for example a book with its author's `id` and `name`, but not the author's books;
-- interfaces and unions select `__typename` and the scalar fields of each possible type (an interface's own fields once, outside the fragments). A field that two possible types declare with different types, for example `id: ID!` and `id: ID`, gets an alias per type (`idOnBook: id`, `idOnFilm: id`), because GraphQL does not allow one result field with two types;
-- nested fields that need arguments are left out.
-
-The built operations are included as `operations.graphql` / `Operations.graphql`. For more data, edit them and regenerate with your own tooling, or write your own operations.
-
-- **TypeScript (Next.js, Nuxt, Angular):** `graphql.ts` holds typed operations and an SDK with one method per operation (`api.Books(...)`), generated by GraphQL Code Generator. The guide adds a small requester for your HTTP client (fetch, axios, or Angular `HttpClient`), and your project needs the `graphql` package. Custom scalars are typed as `unknown`.
-- **C#/.NET:** the ZIP contains a ready `ApiClient` project for **StrawberryShake** (schema, operations, configuration). Your own `dotnet build` generates the typed client (`IGraphQLClient`, `client.Books.ExecuteAsync(...)`); ScrAPI does not run .NET. Custom scalars become `string`.
-- **Not supported:** subscriptions (listed but not generated) and hand-written GraphQL documents as input. A GraphQL URL needs introspection to be enabled; otherwise paste or upload the schema (SDL or introspection JSON).
-
-### OpenAPI 3.1 notes
-
-OpenAPI Generator marks its 3.1 support as beta, so ScrAPI prepares 3.1 input before generating. Your specification itself is never changed.
-
-- **Webhooks are not generated.** ScrAPI generates clients for operations under `paths`; `webhooks` are left out. A document with only webhooks is rejected with an explanation.
-- **Path items in `components.pathItems`** referenced from `paths` are supported. ScrAPI inlines them for the generator, which would otherwise drop those operations without an error.
-- **`const`** becomes a one-value `enum` for the generator, so the property gets a typed enum instead of `any`.
-- **Operations without `responses`** (allowed in 3.1) get a default response without content for the generator, which otherwise refuses the whole specification. The generated method returns no typed body.
-- **Loosely typed:** `prefixItems` becomes a plain array (`any[]` / `List<Object>`), and `if`/`then`/`else` is ignored. The code compiles, but those parts are not typed.
-- **Not supported yet:** schemas that use `$id`, `$anchor`, `$dynamicRef`, or `$dynamicAnchor` are rejected with their location. Use `$ref` to `#/components/schemas/...` instead.
-
-Explicitly excluded:
-
-- Accounts, database, billing, saved history, collaboration.
-- VS Code extension, Git integration, direct project import or writing into projects.
-- External file or URL references inside a specification (a specification loaded from a URL must still be self-contained).
-- Swagger 1.x, OpenAPI 3.2 (until the generator supports it and it is verified).
-- GraphQL subscriptions and user-written GraphQL documents.
-- Server-side fetching of private or local addresses on public deployments (allowed only with `SCRAPI_ALLOW_PRIVATE_URLS=true`).
-- Generated React hooks, Vue composables, framework-specific SSR integrations, complete app scaffolds.
-- Generated Zod schemas or runtime response validation in downloaded clients.
-- An interactive tutorial engine (guides are templates).
-- Persistent server-side storage of uploaded specifications or generated files.
-- Any AI, LLM API, or paid generation service.
-
-## Technology stack
-
-ScrAPI's own implementation stack, separate from the targets it generates:
-
-| Technology                                                                   | Why                                                                                                                                                                                                                     |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Next.js App Router** + **TypeScript (strict mode)**                        | One codebase for UI and server logic. Server Components by default, server code for validation, generation orchestration, and ZIP responses. Strict typing catches mistakes early.                                      |
-| **Tailwind CSS**                                                             | Fast, consistent styling without a custom CSS framework.                                                                                                                                                                |
-| **shadcn/ui**                                                                | Accessible components that live in the repository and can be adapted.                                                                                                                                                   |
-| **Motion for React** (formerly Framer Motion)                                | Guide step transitions and small feedback animations, free features only, respecting reduced-motion preferences.                                                                                                        |
-| **Zod**                                                                      | Runtime validation of application-owned data: request payloads, generation options, operation selections. TypeScript types are inferred from the schemas.                                                               |
-| **Zustand** (optional)                                                       | Used only if shared client state across specification, selection, results, and guide becomes awkward with local React state. Not used for server request state.                                                         |
-| **OpenAPI Generator**, via the npm CLI `@openapitools/openapi-generator-cli` | Existing, deterministic, widely used generator covering the needed targets. Avoids building a custom generation engine. Installed as a normal npm dependency, with the generator version pinned in `openapitools.json`. |
-| **Docker**                                                                   | The only supported way to run ScrAPI outside development. One image contains the Next.js server, the Java runtime, and the generator.                                                                                   |
-| **GitHub Actions + GitHub Container Registry**                               | Publishes the Docker image to `ghcr.io` when a version tag is pushed.                                                                                                                                                   |
-
-Zod and Zustand are approved dependencies. Zustand is installed only if implementation shows it is needed. Any other dependency (for example an OpenAPI validator package, a ZIP library, or a syntax highlighter) needs explicit approval first.
-
-### Validation responsibilities
-
-There are two different kinds of validation:
-
-- **Application-input validation (Zod)**: is the request well-formed? Is the target one ScrAPI supports? Is the selection a list of method + path pairs? Is the input within size limits? This protects ScrAPI's own boundaries.
-- **OpenAPI specification validation (dedicated validator)**: is the document a valid OpenAPI 3.0.x or 3.1.x specification? This uses a purpose-built OpenAPI validator. Zod is not used to reimplement the OpenAPI standard.
-
-Client-side checks give fast feedback. Server-side validation is authoritative, and submitted operation selections are always revalidated against the specification on the server.
-
-## Architecture
-
-A single Next.js application with clearly separated responsibilities:
-
-- **Presentation**: workflow pages, operation selector, guide, and file viewer. Client Components only where interactivity requires them.
-- **Application-input validation**: Zod schemas at every server entry point.
-- **OpenAPI processing**: JSON parsing, version check, specification validation, rejection of external references.
-- **Operation selection**: lists operations keyed by method + path, groups them by tag, and produces a filtered copy of the specification containing selected operations plus all transitively required components.
-- **Generation orchestration**: creates a per-request temp directory, runs the generator with fixed arguments and limits, collects output, and always cleans up.
-- **Target adapters**: one centralized configuration per target (generator and options, output layout, destination mapping, guide template). Next.js/React and Nuxt/Vue share the TypeScript generation path.
-- **Archive handling**: builds one ZIP from the generation results, one folder per framework combination, rejecting unsafe paths and duplicate combinations.
-- **Integration-guide templates**: deterministic per-target templates rendered from the same generation results as the ZIP, chained into one guide.
-
-Operations are identified by HTTP method and path, never only by `operationId`, which may be missing or duplicated.
-
-## Generator runtime and deployment
-
-ScrAPI is one Next.js codebase with no Java code of its own. OpenAPI Generator, however, is written in Java. ScrAPI uses the npm CLI `@openapitools/openapi-generator-cli` at build time to download the pinned generator JAR. At request time the server runs that JAR directly with `java`. Installing through npm does **not** remove the need for Java: **a Java runtime must be present wherever generation runs.** That affects deployment:
-
-- Generation must run in the Node.js server runtime, **not** an Edge runtime.
-- ScrAPI is therefore shipped as a **Docker image** that bundles Node.js, a Java runtime, the generator, and the built app. Running that container is the only supported deployment.
-- The container host must provide enough memory for the JVM, writable temporary storage, and enough request time for generation (JVM startup adds latency).
-- **Static hosting such as GitHub Pages is not supported**, because generation and validation need a server. ScrAPI does not promise compatibility with serverless platforms either.
-- The generator version is pinned in the committed `openapitools.json`. The JAR is downloaded when the Docker image is built, never at request time, so the running container needs no access to the generator's download source.
-- Local development needs Node.js and a Java runtime on the developer's machine for the same reason.
-
-## Self-hosting with Docker
-
-ScrAPI runs as one container: the Next.js server, a Java 21 runtime, and the pinned OpenAPI Generator JAR. The image runs as the non-root `node` user, listens on port `3000`, and stores nothing after a request completes, so it needs no volumes.
-
-### Run a published image
-
-Release images are published to GitHub Container Registry as `ghcr.io/considmadrusan/scrapi`. Each release `vX.Y.Z` is tagged `X.Y.Z`, `X.Y`, and `latest`. Pin a specific version in production rather than using `latest`.
+ScrAPI runs as one Docker container with everything it needs, including the Java runtime the generator uses. With [Docker](https://docs.docker.com/get-docker/) installed:
 
 ```sh
-docker run --init --read-only --tmpfs /tmp --memory 512m -p 3000:3000 ghcr.io/considmadrusan/scrapi:X.Y.Z
+docker run --init --read-only --tmpfs /tmp --memory 512m -p 13000:13000 ghcr.io/considmadrusan/scrapi:latest
 ```
 
-Then open http://localhost:3000.
+Then open http://localhost:13000.
 
-- `--init` forwards shutdown signals to the server, so `docker stop` ends it immediately.
-- `--read-only --tmpfs /tmp`: ScrAPI writes only per-request temporary folders under `/tmp`, and removes them after each generation.
-- `--memory 512m`: a container that generated every target from the sample specifications peaked at about 230 MB, including the JVM. By default ScrAPI runs one generator JVM at a time with a 256 MB heap cap, so a very large specification fails with an error instead of exceeding this limit; further generation requests get a "busy" error until it finishes. On a larger host, raise the limits with the variables below; keep `SCRAPI_MAX_CONCURRENT_GENERATIONS × SCRAPI_GENERATOR_MAX_HEAP_MB` plus about 250 MB for the server within the container's memory.
-- Limits on concurrent work (generations, validations, URL loads, ZIP files) are counted **per server process**. With several containers behind a load balancer, each container allows its own share.
-- The container needs no outbound network access. The generator is part of the image and nothing is downloaded at runtime.
+Or with Docker Compose, save this as `compose.yaml`:
 
-| Environment variable | Default in the image | Purpose                      |
-| -------------------- | -------------------- | ---------------------------- |
-| `PORT`               | `3000`               | Port the server listens on.  |
-| `HOSTNAME`           | `0.0.0.0`            | Address the server binds to. |
-| `SCRAPI_GENERATION_TIMEOUT_SECONDS` | not set (`60`) | How long one OpenAPI generation may run before the generator is stopped. Whole seconds, 5 to 600. |
-| `SCRAPI_MAX_CONCURRENT_GENERATIONS` | not set (`1`) | How many OpenAPI Generator JVMs may run at once; further requests get a "busy" error. 1 to 16. |
-| `SCRAPI_GENERATOR_MAX_HEAP_MB` | not set (`256`) | Heap cap (`-Xmx`) of each generator JVM, in MB. 128 to 16384. |
-| `JAVA_HOME` | not set | When set, the generator runs `$JAVA_HOME/bin/java`; otherwise `java` from the `PATH` (as in the image). |
-| `SCRAPI_ALLOW_PRIVATE_URLS` | not set (`false`) | `true` lets the server load URLs on private and local networks (localhost, `10.x`, `192.168.x`, …) when the browser cannot load them because of CORS. Set it only where every user may reach those networks, for example when you run ScrAPI on your own machine or inside a company network. Never on a public deployment. |
+```yaml
+services:
+  scrapi:
+    image: ghcr.io/considmadrusan/scrapi:latest
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    ports:
+      - "13000:13000"
+    restart: unless-stopped
+```
 
-An invalid value for one of the `SCRAPI_*` number variables is ignored with a warning in the server log, and the default is used.
+Start it with `docker compose up -d` and stop it with `docker compose down`.
 
-New GHCR packages are private by default. To allow anonymous `docker pull`, the repository owner must make the package public in its GitHub package settings.
+- For anything that should last, pin a release instead of `latest`, for example `ghcr.io/considmadrusan/scrapi:0.3.0`.
+- Read-only with a `/tmp` tmpfs keeps the container read-only except for the temporary files of each request, and 512 MB of memory is enough for the default settings.
+- The container needs no outbound network access, no volumes, and no secrets.
 
-### Build the image yourself
-
-From the repository root:
+To build the image from source instead:
 
 ```sh
+git clone https://github.com/ConsidMadrusan/ScrAPI.git
+cd ScrAPI
 docker build -t scrapi .
-docker run --init --read-only --tmpfs /tmp --memory 512m -p 3000:3000 scrapi
+docker run --init --read-only --tmpfs /tmp --memory 512m -p 13000:13000 scrapi
 ```
 
-No build arguments or secrets are needed. The build downloads npm packages, the generator JAR (from Maven Central, at the version in `openapitools.json`), the Debian Java runtime package, and the Google fonts used by the page.
+Configuration (timeouts, concurrency, memory) and production notes are in [Self-hosting with Docker](docs/self-hosting.md).
 
-### Release process
+## Use it from AI agents
 
-Images are published by `.github/workflows/release-image.yml`. Pushing a tag like `v1.2.3` builds the image from the root `Dockerfile` and pushes it to `ghcr.io` using the repository's built-in `GITHUB_TOKEN`. There is one release workflow with no extra secrets, and only `linux/amd64` images are built.
+ScrAPI also has an MCP endpoint (`/api/mcp`), so coding agents can run the same workflow from your editor: validate the description, pick operations, generate, and write the files into your project. Plugins are included for Claude Code, Codex, and OpenCode, and VS Code Copilot can connect directly. With a ScrAPI server running, install the Claude Code plugin with:
 
-## Input handling and temporary files
+```sh
+/plugin install scrapi --marketplace ConsidMadrusan/ScrAPI
+```
 
-- API descriptions are accepted as pasted text, an uploaded file, or a URL loaded by the browser, within a documented size limit (5 MB). The server only receives the text.
-- Only internal references are allowed. ScrAPI never resolves external references.
-- A URL is loaded by the browser. Only when the browser cannot read it (CORS) does the server load it, through `/api/fetch-source`, with two fixed requests only (GET a document, or POST the standard GraphQL introspection query; callers choose neither method nor body). Every address the host resolves to must be public (private, loopback, link-local including cloud metadata, and other reserved ranges are refused, also after redirects and at connect time against DNS rebinding) unless `SCRAPI_ALLOW_PRIVATE_URLS=true`. At most 5 redirects, 20 seconds, 5 MB, and 4 loads at once. A redirect repeats the same request: the introspection query is sent again as a POST, also after 301 or 302, so an endpoint that redirects (for example from `http://` to `https://`) still answers it. URLs, headers, and responses are never logged or stored.
-- YAML is parsed with the core schema only (no custom tags, unique keys, a small alias budget against "billion laughs" documents).
-- GraphQL generation runs in the server process with a fixed configuration and at most two at once; C# GraphQL clients are generated by your own build, not by the server.
-- Specification content is never interpolated into shell commands. The generator is invoked with fixed arguments through safe process APIs, and the specification is passed as a file.
-- Each generation uses its own temporary directory, which is deleted after success **and** after failure.
-- Execution time and output size are limited. A generator that exceeds the limit is stopped.
-- Generated file paths must stay inside the output directory. Unsafe archive paths are rejected.
-- Nothing is stored after the request completes: no saved specifications, no saved output.
-- Specification contents, generated code, and credentials are never logged.
-- Errors are actionable and do not expose stack traces or server details.
+The plugins connect to `http://localhost:13000/api/mcp` by default. If your server uses another port or a domain, change the URL with one command, for example `/plugin configure scrapi@scrapi` in Claude Code or `codex mcp add scrapi --url https://scrapi.example.com/api/mcp` in Codex. See [Your server's URL](docs/ai-agents.md#your-servers-url).
 
-## Proposed roadmap (four weeks, ~20 hours)
+The endpoint is newer than release 0.3.0. Setup for every agent is in [Use ScrAPI from AI agents](docs/ai-agents.md).
 
-This is a **tight MVP schedule, not a guaranteed delivery estimate**. Endpoint selection and the visual integration guide are required, and supporting both across four targets leaves little slack. The plan front-loads the riskiest work: generator output, operation filtering, and real integration examples.
+## Releases
 
-| Week | Focus                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Est. hours |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
-| 1    | **Verification spike.** Run OpenAPI Generator through its npm CLI from a Node.js server context, and choose the generator version to pin. Pick generators and options for each target. Generate from representative specs and compile the output in minimal sample projects (.NET, Next.js, Nuxt, Angular). Prototype reference-preserving operation filtering and confirm filtered specs still generate. Confirm the generator runs inside a container with Node.js and a Java runtime. Scaffold the Next.js app. | ~6         |
-| 2    | **Input and selection.** Paste/upload, JSON parsing, Zod input schemas, OpenAPI validation, version and external-reference checks, clear errors. Operation list grouped by tag, search, individual/group/all selection, counts, server-side revalidation, finished filtering.                                                                                                                                                                                                                                      | ~5         |
-| 3    | **Generation and ZIP.** Centralized target configuration, generation orchestration with temp-dir lifecycle and limits, path safety, ZIP response, invalidation of stale results.                                                                                                                                                                                                                                                                                                                                   | ~4         |
-| 4    | **Guides and acceptance.** Per-target guide templates, folder tree, file viewer with copy, path mapping, usage examples from selected operations, verification and common errors, navigation. Finish the `Dockerfile` and `.dockerignore`, and publish a first tagged image. Run the acceptance criteria against sample projects. Update this README with real setup instructions.                                                                                                                                 | ~5         |
-|      | **Total**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | **~20**    |
-
-Optional polish that can be deferred if time runs short (without dropping required features): animations beyond basic step transitions, drag-and-drop upload (a file input is enough), visual refinements to the folder tree, search-match highlighting, dark mode, and extra sample specifications beyond the representative set.
-
-## Delivery risks
-
-- **Reference filtering.** Keeping exactly the components selected operations need, across parameters, request bodies, responses, headers, composed schemas, and nested references, is easy to get subtly wrong. Missing a component breaks generation; over-including is safer but noisier.
-- **Generator compatibility.** Generator output quality, naming (especially for missing or duplicate `operationId`s, or operations with several tags), dependencies, and compile success vary by target and option. A target might need configuration changes or post-processing that takes longer than planned.
-- **Accurate integration guides.** Guides must match the actual generated files, dependencies, and method signatures for four targets. Usage examples depend on generated naming, which must be derived from the output rather than guessed.
-- **Runtime and hosting.** The Java dependency, JVM startup time, memory, and temporary storage limit where ScrAPI can run. Packaging the generator and a Java runtime into a small, non-root Docker image adds work to an already tight budget.
-- **Time budget.** ~20 hours for four targets plus selection and guides leaves very little buffer. Scope changes need explicit agreement.
-
-## Acceptance criteria (completed MVP)
-
-- [x] Each advertised target generates successfully and produces usable typed output.
-- [x] Generated output compiles in representative sample projects for each target.
-- [x] Clear errors for malformed JSON, invalid specifications, unsupported versions, unsupported external references, and invalid generation options.
-- [x] Individual, group, and select-all/clear-all operation selection work with consistent counts, including operations with several tags.
-- [x] Methods sharing a path (e.g. `GET /users` and `POST /users`) can be selected independently.
-- [x] Methods for unselected operations are absent from generated clients.
-- [x] Required transitive schemas and shared dependencies are included.
-- [x] Internal references still resolve after filtering.
-- [x] The ZIP has the correct folder structure.
-- [x] File contents in the ZIP and the guide match.
-- [x] Guide paths, dependency instructions, and usage examples are accurate.
-- [x] A developer can integrate the output by following the guide in each supported sample project.
-- [x] Temporary files are cleaned up after both successful and failed generation.
-- [x] The application's generation workflow has no AI dependency.
-- [x] The Docker image builds from the repository root, runs as a non-root user, and generates output for every target inside the container.
-- [ ] Pushing a version tag publishes the image to `ghcr.io` through the release workflow. (Not yet verified: no tag has been pushed.)
-
-## Deferred features
-
-- OpenAPI 3.2 support (after the generator supports it and it is verified).
-- External file and URL references inside a specification.
-- GraphQL subscriptions and user-written GraphQL documents.
-- Generating several specifications at once.
-- Generated React hooks, Vue composables, and framework-specific SSR integrations.
-- Generated Zod schemas or runtime response validation.
-- Accounts, saved history, collaboration, and sharing.
-- VS Code extension, Git integration, and direct project import.
-- An interactive tutorial engine.
+- Every push and pull request to `main` runs the [CI workflow](.github/workflows/ci.yml): lint, typecheck, and tests.
+- Pushing a version tag `vX.Y.Z` runs the [release workflow](.github/workflows/release-image.yml), which publishes `ghcr.io/considmadrusan/scrapi` tagged `X.Y.Z`, `X.Y`, and `latest` (linux/amd64).
+- All versions: [tags](https://github.com/ConsidMadrusan/ScrAPI/tags) and [container images](https://github.com/ConsidMadrusan/ScrAPI/pkgs/container/scrapi).
 
 ## Development
 
-Requirements: Node.js (version in `.nvmrc`) and, for running the generator, a Java runtime (Java 11 or newer; verified with 17 and 21).
+You need Node.js (version in `.nvmrc`) and a Java runtime (11 or newer) for the generator.
 
 ```sh
-npm ci                    # install dependencies from the lockfile
+npm ci                    # install dependencies
 npm run setup:generator   # download the pinned OpenAPI Generator JAR once
-npm run dev               # start the Next.js dev server
+npm run dev               # start the dev server on http://localhost:13000
 npm run check             # lint, typecheck, and tests (same as CI)
 ```
 
-`npm run dev` serves the full workflow. Generation runs the downloaded JAR with `java`, so `java` must be on your `PATH`. Running ScrAPI outside development uses the Docker image (see [Self-hosting with Docker](#self-hosting-with-docker)). Check changes in the container before a release.
+More in [Development](docs/development.md).
 
-### Pull request checks
+## Documentation
 
-- **CI** (`.github/workflows/ci.yml`) runs `npm run check` on every pull request and on pushes to `main`.
+- [How ScrAPI works](docs/how-it-works.md): workflow, endpoint selection, targets, guides, GraphQL and OpenAPI 3.1 notes, scope, and input handling.
+- [Self-hosting with Docker](docs/self-hosting.md): running the image, environment variables, building, and releasing.
+- [Use ScrAPI from AI agents](docs/ai-agents.md): the MCP endpoint and plugins for Claude Code, Codex, OpenCode, and VS Code.
+- [Architecture and technology](docs/architecture.md): the tech stack and module boundaries.
+- [Development](docs/development.md): local setup and pull request checks.
+- [MVP project plan](docs/project-plan.md): roadmap, risks, acceptance criteria, and deferred features.

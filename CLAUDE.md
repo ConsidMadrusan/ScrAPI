@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-Guidance for coding agents working in this repository. Read this file and `README.md` before making changes.
+Guidance for coding agents working in this repository. Read this file, `README.md`, and the relevant page in `docs/` before making changes.
 
 ## Current status
 
-The **MVP is implemented** (all four phases). Release is pending: no version tag has been pushed. The repository contains:
+The **MVP is implemented** (all four phases) and released: `v0.3.0` is the latest image on ghcr.io (`v0.1.0` before it). The MCP endpoint and agent plugins below are newer than 0.3.0. `README.md` is a short introduction; the details live in `docs/` (`how-it-works.md`, `self-hosting.md`, `ai-agents.md`, `architecture.md`, `development.md`, `project-plan.md`). The repository contains:
 
 - The full flow from API description to ZIP download:
   - input from paste, upload, or a URL loaded **in the browser** (`src/components/workflow/fetch-source.ts`; GraphQL endpoints by introspection)
@@ -17,6 +17,8 @@ The **MVP is implemented** (all four phases). Release is pending: no version tag
   - the `/api/validate`, `/api/generate` (one framework combination per request), `/api/graphql/validate`, `/api/graphql/generate`, and `/api/archive` (one ZIP built on the server from all results of a generation run, one folder per combination) Route Handlers
   - the workflow UI: one route per stage in `src/app/(workflow)/` (`/`, `/select`, `/targets`, `/generating`, `/implement` as a landing screen for ZIP download or guide, and `/implement/guide` for the one-step-at-a-time guide), screens in `src/components/workflow/`, and shared state in a React context provider (`workflow-context.tsx`) mounted by the route group layout
 - Integration guides: deterministic templates in `src/lib/guides/` (`render.ts` for OpenAPI, `render-graphql.ts` for GraphQL, shared steps in `common.ts`), chained into one guide for all combinations (`chained.ts`), rendered in the UI (`src/components/guide/`) and as `INTEGRATION.md` in the ZIP, both from the same generation results.
+- Agent access: the `/api/mcp` Route Handler (MCP, Streamable HTTP, stateless, built with `@modelcontextprotocol/server` `createMcpHandler`) with the tools `scrapi_list_targets`, `scrapi_validate`, and `scrapi_generate` (`src/lib/mcp/`). Validation is shared with the web routes through `src/lib/source/describe.ts`. `scrapi_generate` returns files inline (destination path + content) plus the guide Markdown, capped by `MAX_MCP_RESULT_BYTES`; the agent writes the files, ScrAPI never does. The MCP tools load no URLs.
+- Agent plugins in `integrations/`: one canonical skill (`integrations/skill/SKILL.md`) copied into a Claude Code plugin (`integrations/claude-code/scrapi/`, marketplace `.claude-plugin/marketplace.json`), a Codex plugin (`integrations/codex/scrapi/`, marketplace `.agents/plugins/marketplace.json`), and OpenCode skill + `opencode.json` snippet (`integrations/opencode/`). `src/lib/mcp/integrations.test.ts` keeps the copies identical, the tool names in sync with `TOOL_NAMES`, and the plugin versions equal to `package.json`. When you change a tool, update the canonical skill and copy it. The server URL defaults to `http://localhost:13000/api/mcp` everywhere; Claude Code reads it from the plugin's `userConfig` option `scrapi_mcp_url` (`${user_config.scrapi_mcp_url}` in `.mcp.json`), Codex users override it with `codex mcp add scrapi --url …`, and OpenCode/VS Code users edit `url` (see `docs/ai-agents.md#your-servers-url`). Verified installs: `claude plugin validate`, Codex 0.155 (`codex plugin marketplace add` + `codex plugin add`), OpenCode 2.1.3 (`mcp.<name>` shape, not `mcp.servers`).
 - The `typescript-fetch` and `typescript-axios` template overrides in `generator-templates/`.
 - Sample specifications in `samples/specs/`, and shared test fixtures in `src/test/`.
 - The root `Dockerfile` and `.dockerignore`, and the CI and release workflows in `.github/workflows/`.
@@ -160,7 +162,7 @@ Rules:
 - Generate client methods only for selected operations; never drop dependencies those operations need.
 - **URLs are loaded by the browser first** (`src/components/workflow/fetch-source.ts`: http/https only, no credentials in the URL, `credentials: "omit"`, a time limit, and the specification size limit). Only when the browser cannot read the URL (a network or CORS error) does it ask **`/api/fetch-source`**, which loads it on the server (`src/lib/source/fetch-url.ts`) under these SSRF rules. Keep them when changing that code:
   - Two fixed requests only: GET a document, or POST the standard introspection query built on the server. Never accept a method, body, or arbitrary forwarding from the request.
-  - Public addresses only: every resolved address is checked at connect time (custom `lookup`, so DNS rebinding cannot swap it), IP literals and `localhost`/`.local`/`.internal` names before connecting, and again after every redirect (at most 5). `SCRAPI_ALLOW_PRIVATE_URLS=true` (documented in README) is the only way to allow private and local networks.
+  - Public addresses only: every resolved address is checked at connect time (custom `lookup`, so DNS rebinding cannot swap it), IP literals and `localhost`/`.local`/`.internal` names before connecting, and again after every redirect (at most 5). `SCRAPI_ALLOW_PRIVATE_URLS=true` (documented in `docs/self-hosting.md`) is the only way to allow private and local networks.
   - User headers are forwarded, but ScrAPI-controlled headers (`Host`, `Content-Type`, `Content-Length`, encoding, hop-by-hop) cannot be set, and header values cannot contain line breaks.
   - 20-second timeout, 5 MB body limit, `accept-encoding: identity`, at most 4 loads at once. Never log or store the URL, headers, or body.
 - Do not resolve external references. Specifications must be self-contained; reject external `$ref` values with a clear error, also after a Swagger 2.0 conversion.
@@ -218,7 +220,7 @@ The code standard is enforced by tooling. Run `npm run check` (lint, typecheck, 
   - Download the pinned JAR at Docker build time (and once locally during development setup). Nothing may be downloaded at request time. Treat a missing JAR at runtime as a configuration error, not a reason to fetch it.
   - The npm CLI is a **build-time tool only**: it downloads the pinned JAR (`npm run setup:generator`, and in the Docker build stage). At request time, server code runs the JAR directly as `java -jar <pinned jar> generate …`. It runs as a child process with fixed arguments and no shell, as described under Architecture principles. This keeps the CLI's dependencies, which `npm audit` flags in its download code, out of the runtime image.
   - Next.js standalone output does not trace the JAR, so copy the pinned JAR into the runtime image explicitly. The CLI package is not needed at runtime.
-- Generator runtime limits (timeout, concurrent JVMs, heap) default to values that fit a 512 MB container and can be changed with the environment variables documented in README.md (`src/lib/generation/runtime-config.ts`). Other limits are constants in `src/lib/validation/limits.ts`.
+- Generator runtime limits (timeout, concurrent JVMs, heap) default to values that fit a 512 MB container and can be changed with the environment variables documented in `docs/self-hosting.md` (`src/lib/generation/runtime-config.ts`). Other limits are constants in `src/lib/validation/limits.ts`.
 - The container host must provide enough memory for the JVM, writable temporary storage, and enough request time for generation. Verify this early.
 
 ## Docker rules
@@ -233,7 +235,7 @@ Image:
 - The runtime stage contains only what runs: Node.js, a Java **runtime** (not a full JDK, unless the generator needs it), the generator, and the built app. No build tools, compilers, or package caches.
 - Order layers for caching: copy the lockfile and install dependencies before copying source code. Use the lockfile for reproducible installs.
 - Run as a non-root user. The app must work with a read-only root filesystem when a writable temp directory (e.g. a tmpfs on `/tmp`) is mounted. Generation temp directories go under the OS temp directory only.
-- Never put secrets, `.env` files, or credentials in the image or in build arguments. Configuration comes from runtime environment variables. Document every variable in `README.md` when it is introduced, and do not invent any before then.
+- Never put secrets, `.env` files, or credentials in the image or in build arguments. Configuration comes from runtime environment variables. Document every variable in `docs/self-hosting.md` when it is introduced, and do not invent any before then.
 - Keep a `.dockerignore` (added with the `Dockerfile`) that excludes at least `.git`, `node_modules`, `.next`, local `.env*` files, coverage, logs, and generation artifacts.
 - Expose a single HTTP port, log to stdout/stderr, and shut down cleanly on `SIGTERM`. Recommend `docker run --init` in docs rather than adding an init dependency to the image.
 - Fetch the generator JAR only in a build stage, at the version pinned in `openapitools.json`. The runtime container must start without network access to the generator's download source.
@@ -250,7 +252,7 @@ Rules for the release workflow:
 - It authenticates with the built-in `GITHUB_TOKEN` and minimal permissions (`contents: read`, `packages: write`). Do not add personal access tokens or other secrets.
 - Keep it to checkout, Buildx setup, registry login, metadata, and build-and-push. Do not add extra jobs, registries, platforms (it builds `linux/amd64` only), signing, scanning, or deployment steps without user approval. Propose them instead.
 - Use official `actions/*` and `docker/*` actions only, on major-version tags. Pinning to commit SHAs is a recommended hardening step, but only with SHAs that have been verified, never guessed.
-- Do not change the image name or tag scheme without updating `README.md` to match.
+- Do not change the image name or tag scheme without updating `README.md` and `docs/self-hosting.md` to match.
 
 ## Things you must not do
 
@@ -263,6 +265,7 @@ Rules for the release workflow:
   - `yaml` (YAML input) and `@scalar/openapi-upgrader` (Swagger 2.0 → OpenAPI 3.0).
   - `graphql`, `@graphql-codegen/core`, `@graphql-codegen/typescript-operations`, and `@graphql-codegen/typescript-generic-sdk` (GraphQL schemas and TypeScript clients). StrawberryShake is not a dependency of ScrAPI: the generated C# project references it, and the user's build restores it.
   - `server-only`, which marks server modules.
+  - `@modelcontextprotocol/server` (the official MCP TypeScript server SDK, v2) for the `/api/mcp` endpoint.
   - A ZIP library (`jszip`, not yet installed).
   - The packages shadcn/ui installs for its components.
   - The dev tools Vitest, `@vitejs/plugin-react`, `jsdom`, Testing Library (`react`, `dom`, `user-event`, `jest-dom`), and `typescript-eslint`.
@@ -286,11 +289,11 @@ Rules for the release workflow:
 
 ## MVP scope reminders
 
-In scope: one API description and one or more framework combinations per generation; paste, upload, or a URL loaded in the browser; OpenAPI 3.0.x and 3.1.x and Swagger 2.0 in JSON or YAML; GraphQL schemas (SDL, introspection JSON, or introspection of a URL) with Query and Mutation operations; internal references, endpoint selection, ZIP download, and template-based visual integration guides for all four targets.
+In scope: one API description and one or more framework combinations per generation; paste, upload, or a URL loaded in the browser; OpenAPI 3.0.x and 3.1.x and Swagger 2.0 in JSON or YAML; GraphQL schemas (SDL, introspection JSON, or introspection of a URL) with Query and Mutation operations; internal references, endpoint selection, ZIP download, and template-based visual integration guides for all four targets; the same workflow for AI agents through the MCP endpoint and the plugins in `integrations/` (Claude Code, Codex, OpenCode; VS Code Copilot through `.vscode/mcp.json`).
 
-Out of scope: accounts, database, billing, saved history, collaboration, VS Code extension, Git integration, direct project import, external references, server-side loading of private or local URLs on public deployments, GraphQL subscriptions and hand-written GraphQL documents, generated React hooks / Vue composables, framework-specific SSR integrations, app scaffolds generated by ScrAPI (the "new project" guide only shows official CLI commands), generated Zod schemas, automatic runtime response validation in generated clients, and an interactive tutorial engine.
+Out of scope: accounts, database, billing, saved history, collaboration, a VS Code extension, MCP tools that load URLs or write files, Git integration, direct project import, external references, server-side loading of private or local URLs on public deployments, GraphQL subscriptions and hand-written GraphQL documents, generated React hooks / Vue composables, framework-specific SSR integrations, app scaffolds generated by ScrAPI (the "new project" guide only shows official CLI commands), generated Zod schemas, automatic runtime response validation in generated clients, and an interactive tutorial engine.
 
-The schedule (~20 hours over four weeks) is tight. If a required feature is at risk, raise it with the user instead of silently cutting it. See `README.md` for the roadmap, risks, and acceptance criteria.
+The schedule (~20 hours over four weeks) is tight. If a required feature is at risk, raise it with the user instead of silently cutting it. See `docs/project-plan.md` for the roadmap, risks, and acceptance criteria.
 
 ## Language
 

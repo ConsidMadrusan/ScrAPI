@@ -29,5 +29,8 @@ scrapi-*.zip
 # Not needed to build the image
 docs
 samples
+integrations
+.agents
+.claude-plugin
 Dockerfile
 .dockerignore

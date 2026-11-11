@@ -1,0 +1,12 @@
+{
+  "name": "scrapi",
+  "description": "ScrAPI plugins for AI coding agents.",
+  "owner": { "name": "ConsidMadrusan" },
+  "plugins": [
+    {
+      "name": "scrapi",
+      "source": "./integrations/claude-code/scrapi",
+      "description": "Generate typed API clients from OpenAPI, Swagger, or GraphQL with a ScrAPI server."
+    }
+  ]
+}

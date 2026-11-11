@@ -33,7 +33,7 @@ FROM node-java AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000 \
+    PORT=13000 \
     HOSTNAME=0.0.0.0
 
 COPY --from=build /app/.next/standalone ./
@@ -43,5 +43,5 @@ COPY generator-templates ./generator-templates
 COPY --from=generator /app/node_modules/@openapitools/openapi-generator-cli/versions/ ./node_modules/@openapitools/openapi-generator-cli/versions/
 
 USER node
-EXPOSE 3000
+EXPOSE 13000
 CMD ["node", "server.js"]
